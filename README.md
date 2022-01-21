@@ -1,5 +1,5 @@
 # desmond
-A bundled and forked version of DeSmuME-wasm (a WebAssembly port of DeSmuME) that makes it easily embedabble.
+A bundled and forked version of DeSmuME-wasm (a WebAssembly port of DeSmuME, which is a Nintendo DS emulator) that makes it easily embedabble.
 
 # Usage
 ```html
