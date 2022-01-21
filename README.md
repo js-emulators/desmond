@@ -11,5 +11,6 @@ A bundled and forked version of DeSmuME-wasm (a WebAssembly port of DeSmuME) tha
      window.onload = function(){
     document.getElementById("player").loadURL("path-to-game.nds");
      }
+    </script>
   </body>
 </html>
