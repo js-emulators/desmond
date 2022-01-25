@@ -12,7 +12,7 @@
 <body style="background: black;">
     <desmond-player></desmond-player>
     <input type="file" style="position: absolute; transform: translate(-50%, -50%); left: 50%; top: 95%;"></input>
-    <script src="./dist/desmond.min.js"></script>
+    <script src="../dist/desmond.min.js"></script>
     <script>
         document.querySelector("input").onchange = function() {
             document.querySelector("desmond-player").loadURL(URL.createObjectURL(document.querySelector("input").files[0]))
