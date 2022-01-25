@@ -3,20 +3,16 @@
 
 <head>
     <meta charset="utf-8" />
-    <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black">
     <meta name="viewport" content="user-scalable=no, initial-scale=1, maximum-scale=1, minimum-scale=1, width=device-width, height=device-height">
     <link rel="manifest" href="manifest.json">
-    <link rel="apple-touch-icon" href="icon.png">
-    <link rel="preload" href="audio-worklet.js" as="script">
-    <link href="dark.css" rel="stylesheet">
-    <title>DS Player</title>
+    <title>Desmond - Firmware Demo</title>
 </head>
 
 <body style="background: black;">
     <desmond-player></desmond-player>
     <input type="file" style="position: absolute; transform: translate(-50%, -50%); left: 50%; top: 95%;"></input>
-    <script src="build/desmond.js"></script>
+    <script src="./dist/desmond.min.js"></script>
     <script>
         document.querySelector("input").onchange = function() {
             document.querySelector("desmond-player").loadURL(URL.createObjectURL(document.querySelector("input").files[0]))
