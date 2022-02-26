@@ -6,7 +6,7 @@ A bundled and forked version of DeSmuME-wasm (a WebAssembly port of DeSmuME, whi
 npm install desmond-emu
 ```
 
-You can also run this to get Desmond files on Linux, and on Windows with WSL2:
+You can also run this to get Desmond files on Linux, and on Windows with WSL2 and [wingubash](https://npmjs.com/package/wingubash):
 ```
 curl https://raw.githubusercontent.com/js-emulators/desmond/main/installer.sh | sh
 ```
