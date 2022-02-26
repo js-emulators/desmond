@@ -8,7 +8,7 @@ npm install desmond-emu
 
 You can also run this to get Desmond files on Linux, and on Windows with WSL2:
 ```
-curl https://raw.githubusercontent.com/Unzor/desmond/main/installer.sh | sh
+curl https://raw.githubusercontent.com/js-emulators/desmond/main/installer.sh | sh
 ```
 
 # Usage
