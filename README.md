@@ -1,6 +1,9 @@
 # desmond
 A bundled and forked version of DeSmuME-wasm (a WebAssembly port of DeSmuME, which is a Nintendo DS emulator) that makes it easily embedabble.
 
+# NOTE (READ BEFORE MAKING ISSUE)
+If you have an issue with the emulator, please go [here](https://github.com/44670/desmume-wasm) instead. I am not the author of the emulator itself. I just made the project embeddable. If you have an issue with the embedding, make an issue here.
+
 # Installation
 ```
 npm install desmond-emu
