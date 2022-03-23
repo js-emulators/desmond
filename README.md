@@ -28,6 +28,9 @@ curl https://raw.githubusercontent.com/js-emulators/desmond/main/installer.sh | 
   </body>
 </html>
 ```
+# Run function after load
+To run a function after the file loads, you may attach a function as the second argument.
+
 # Enable microphone
 To use the microphone, you have to use the "enableMicrophone" function.
 Here is an example:
