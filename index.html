@@ -29,12 +29,15 @@ left: 50%;
   &lt;body&gt;&#10;<br>    &lt;desmond-player id=&#34;player&#34;&gt;&lt;/desmond-player&gt;&#10;<br>    &lt;script src=&#34;desmond.min.js&#34;&gt;&lt;/script&gt;&#10;<br>    &lt;script&gt;&#10;<br>     window.onload = function(){<br>&#10;    document.getElementById(&#34;player&#34;).loadURL(&#34;path-to-game.nds&#34;);<br>&#10;     }&#10;    <br>&lt;/script&gt;&#10;<br>  &lt;/body&gt;<br>&#10;&lt;/html&gt;</div>
 <h1 id="unplacedheader" style="position: relative; width: 100%; text-align: center; top: 85%;"> Demo </h1>
 <input type="file" style="position: relative; transform: translate(-50%, -50%); left: 30%; top: 90%;"></input>
+<input type="checkbox" id="microphone_on" style="position: relative; transform: translate(-50%, -50%); left: 30%; top: 95%;"></input>
 <desmond-player id="player" style="position: relative; transform: translate(-50%, -50%); left: 30%; top: 100%; border-color: black;"></desmond-player>
 <a href="demos/firmware.html" id="unplacedheader" style="position: relative; width: 100%; text-align: center; top: 105%;"> Firmware/Home Screen Demo (supports less games as it is using outdated firmware and is just for showcasing purposes) </a>
 <script src="dist/desmond.min.js"></script>
 <script>
   document.querySelector("input").onchange = function(){
-document.querySelector("desmond-player").loadURL(URL.createObjectURL(document.querySelector("input").files[0]))
+document.querySelector("desmond-player").loadURL(URL.createObjectURL(document.querySelector("input").files[0]), function(){
+document.querySelector("desmond-player").enableMicrophone();
+})
 }
   
 w3CodeColor(document.getElementById("code"));
