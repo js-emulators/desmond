@@ -32,11 +32,14 @@ left: 50%;
 <input type="checkbox" id="microphone_on" style="position: relative; transform: translate(-50%, -50%); left: 30%; top: 95%;"></input>
 <desmond-player id="player" style="position: relative; transform: translate(-50%, -50%); left: 30%; top: 100%; border-color: black;"></desmond-player>
 <a href="demos/firmware.html" id="unplacedheader" style="position: relative; width: 100%; text-align: center; top: 105%;"> Firmware/Home Screen Demo (supports less games as it is using outdated firmware and is just for showcasing purposes) </a>
+<p style="position: absolute; top: 98.35%; left: 49%;"> Enable Microphone </p>
 <script src="dist/desmond.min.js"></script>
 <script>
   document.querySelector("input").onchange = function(){
 document.querySelector("desmond-player").loadURL(URL.createObjectURL(document.querySelector("input").files[0]), function(){
+if (document.querySelector("input[type='checkbox']").checked) {
 document.querySelector("desmond-player").enableMicrophone();
+}
 })
 }
   
