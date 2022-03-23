@@ -27,3 +27,25 @@ curl https://raw.githubusercontent.com/js-emulators/desmond/main/installer.sh | 
     </script>
   </body>
 </html>
+```
+# Enable microphone
+To use the microphone, you have to use the "enableMicrophone" function.
+Here is an example:
+```html
+<!doctype html>
+<html>
+<body>
+    <desmond-player id="player"></desmond-player>
+    <script src="build/desmond.js"></script>
+  <script>
+      var player = document.getElementById("player");
+      player.loadURL("FILE_HERE.nds", function(){
+         player.enableMicrophone();
+      })
+  </script>
+</body>
+</html>
+</body>
+
+</html>
+```
