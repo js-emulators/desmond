@@ -47,8 +47,6 @@ Here is an example:
       })
   </script>
 </body>
-</html>
-</body>
 
 </html>
 ```
