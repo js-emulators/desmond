@@ -1,3449 +1,4220 @@
-/*!
-    localForage -- Offline Storage, Improved
-    Version 1.7.3
-    https://localforage.github.io/localForage
-    (c) 2013-2017 Mozilla, Apache License 2.0
-*/
-(function(f){if(typeof exports==="object"&&typeof module!=="undefined"){module.exports=f()}else if(typeof define==="function"&&define.amd){define([],f)}else{var g;if(typeof window!=="undefined"){g=window}else if(typeof global!=="undefined"){g=global}else if(typeof self!=="undefined"){g=self}else{g=this}g.localforage = f()}})(function(){var define,module,exports;return (function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw (f.code="MODULE_NOT_FOUND", f)}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(_dereq_,module,exports){
-(function (global){
-'use strict';
-var Mutation = global.MutationObserver || global.WebKitMutationObserver;
-
-var scheduleDrain;
-
-{
-  if (Mutation) {
-    var called = 0;
-    var observer = new Mutation(nextTick);
-    var element = global.document.createTextNode('');
-    observer.observe(element, {
-      characterData: true
-    });
-    scheduleDrain = function () {
-      element.data = (called = ++called % 2);
-    };
-  } else if (!global.setImmediate && typeof global.MessageChannel !== 'undefined') {
-    var channel = new global.MessageChannel();
-    channel.port1.onmessage = nextTick;
-    scheduleDrain = function () {
-      channel.port2.postMessage(0);
-    };
-  } else if ('document' in global && 'onreadystatechange' in global.document.createElement('script')) {
-    scheduleDrain = function () {
-
-      // Create a <script> element; its readystatechange event will be fired asynchronously once it is inserted
-      // into the document. Do so, thus queuing up the task. Remember to clean up once it's been called.
-      var scriptEl = global.document.createElement('script');
-      scriptEl.onreadystatechange = function () {
-        nextTick();
-
-        scriptEl.onreadystatechange = null;
-        scriptEl.parentNode.removeChild(scriptEl);
-        scriptEl = null;
-      };
-      global.document.documentElement.appendChild(scriptEl);
-    };
-  } else {
-    scheduleDrain = function () {
-      setTimeout(nextTick, 0);
-    };
-  }
-}
-
-var draining;
-var queue = [];
-//named nextTick for less confusing stack traces
-function nextTick() {
-  draining = true;
-  var i, oldQueue;
-  var len = queue.length;
-  while (len) {
-    oldQueue = queue;
-    queue = [];
-    i = -1;
-    while (++i < len) {
-      oldQueue[i]();
+! function(e) {
+    if ("object" == typeof exports && "undefined" != typeof module) module.exports = e();
+    else if ("function" == typeof define && define.amd) define([], e);
+    else {
+        ("undefined" != typeof window ? window : "undefined" != typeof global ? global : "undefined" != typeof self ? self : this).localforage = e()
     }
-    len = queue.length;
-  }
-  draining = false;
-}
-
-module.exports = immediate;
-function immediate(task) {
-  if (queue.push(task) === 1 && !draining) {
-    scheduleDrain();
-  }
-}
-
-}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],2:[function(_dereq_,module,exports){
-'use strict';
-var immediate = _dereq_(1);
-
-/* istanbul ignore next */
-function INTERNAL() {}
-
-var handlers = {};
-
-var REJECTED = ['REJECTED'];
-var FULFILLED = ['FULFILLED'];
-var PENDING = ['PENDING'];
-
-module.exports = Promise;
-
-function Promise(resolver) {
-  if (typeof resolver !== 'function') {
-    throw new TypeError('resolver must be a function');
-  }
-  this.state = PENDING;
-  this.queue = [];
-  this.outcome = void 0;
-  if (resolver !== INTERNAL) {
-    safelyResolveThenable(this, resolver);
-  }
-}
-
-Promise.prototype["catch"] = function (onRejected) {
-  return this.then(null, onRejected);
-};
-Promise.prototype.then = function (onFulfilled, onRejected) {
-  if (typeof onFulfilled !== 'function' && this.state === FULFILLED ||
-    typeof onRejected !== 'function' && this.state === REJECTED) {
-    return this;
-  }
-  var promise = new this.constructor(INTERNAL);
-  if (this.state !== PENDING) {
-    var resolver = this.state === FULFILLED ? onFulfilled : onRejected;
-    unwrap(promise, resolver, this.outcome);
-  } else {
-    this.queue.push(new QueueItem(promise, onFulfilled, onRejected));
-  }
-
-  return promise;
-};
-function QueueItem(promise, onFulfilled, onRejected) {
-  this.promise = promise;
-  if (typeof onFulfilled === 'function') {
-    this.onFulfilled = onFulfilled;
-    this.callFulfilled = this.otherCallFulfilled;
-  }
-  if (typeof onRejected === 'function') {
-    this.onRejected = onRejected;
-    this.callRejected = this.otherCallRejected;
-  }
-}
-QueueItem.prototype.callFulfilled = function (value) {
-  handlers.resolve(this.promise, value);
-};
-QueueItem.prototype.otherCallFulfilled = function (value) {
-  unwrap(this.promise, this.onFulfilled, value);
-};
-QueueItem.prototype.callRejected = function (value) {
-  handlers.reject(this.promise, value);
-};
-QueueItem.prototype.otherCallRejected = function (value) {
-  unwrap(this.promise, this.onRejected, value);
-};
-
-function unwrap(promise, func, value) {
-  immediate(function () {
-    var returnValue;
-    try {
-      returnValue = func(value);
-    } catch (e) {
-      return handlers.reject(promise, e);
-    }
-    if (returnValue === promise) {
-      handlers.reject(promise, new TypeError('Cannot resolve promise with itself'));
-    } else {
-      handlers.resolve(promise, returnValue);
-    }
-  });
-}
-
-handlers.resolve = function (self, value) {
-  var result = tryCatch(getThen, value);
-  if (result.status === 'error') {
-    return handlers.reject(self, result.value);
-  }
-  var thenable = result.value;
-
-  if (thenable) {
-    safelyResolveThenable(self, thenable);
-  } else {
-    self.state = FULFILLED;
-    self.outcome = value;
-    var i = -1;
-    var len = self.queue.length;
-    while (++i < len) {
-      self.queue[i].callFulfilled(value);
-    }
-  }
-  return self;
-};
-handlers.reject = function (self, error) {
-  self.state = REJECTED;
-  self.outcome = error;
-  var i = -1;
-  var len = self.queue.length;
-  while (++i < len) {
-    self.queue[i].callRejected(error);
-  }
-  return self;
-};
-
-function getThen(obj) {
-  // Make sure we only access the accessor once as required by the spec
-  var then = obj && obj.then;
-  if (obj && (typeof obj === 'object' || typeof obj === 'function') && typeof then === 'function') {
-    return function appyThen() {
-      then.apply(obj, arguments);
-    };
-  }
-}
-
-function safelyResolveThenable(self, thenable) {
-  // Either fulfill, reject or reject with error
-  var called = false;
-  function onError(value) {
-    if (called) {
-      return;
-    }
-    called = true;
-    handlers.reject(self, value);
-  }
-
-  function onSuccess(value) {
-    if (called) {
-      return;
-    }
-    called = true;
-    handlers.resolve(self, value);
-  }
-
-  function tryToUnwrap() {
-    thenable(onSuccess, onError);
-  }
-
-  var result = tryCatch(tryToUnwrap);
-  if (result.status === 'error') {
-    onError(result.value);
-  }
-}
-
-function tryCatch(func, value) {
-  var out = {};
-  try {
-    out.value = func(value);
-    out.status = 'success';
-  } catch (e) {
-    out.status = 'error';
-    out.value = e;
-  }
-  return out;
-}
-
-Promise.resolve = resolve;
-function resolve(value) {
-  if (value instanceof this) {
-    return value;
-  }
-  return handlers.resolve(new this(INTERNAL), value);
-}
-
-Promise.reject = reject;
-function reject(reason) {
-  var promise = new this(INTERNAL);
-  return handlers.reject(promise, reason);
-}
-
-Promise.all = all;
-function all(iterable) {
-  var self = this;
-  if (Object.prototype.toString.call(iterable) !== '[object Array]') {
-    return this.reject(new TypeError('must be an array'));
-  }
-
-  var len = iterable.length;
-  var called = false;
-  if (!len) {
-    return this.resolve([]);
-  }
-
-  var values = new Array(len);
-  var resolved = 0;
-  var i = -1;
-  var promise = new this(INTERNAL);
-
-  while (++i < len) {
-    allResolver(iterable[i], i);
-  }
-  return promise;
-  function allResolver(value, i) {
-    self.resolve(value).then(resolveFromAll, function (error) {
-      if (!called) {
-        called = true;
-        handlers.reject(promise, error);
-      }
-    });
-    function resolveFromAll(outValue) {
-      values[i] = outValue;
-      if (++resolved === len && !called) {
-        called = true;
-        handlers.resolve(promise, values);
-      }
-    }
-  }
-}
-
-Promise.race = race;
-function race(iterable) {
-  var self = this;
-  if (Object.prototype.toString.call(iterable) !== '[object Array]') {
-    return this.reject(new TypeError('must be an array'));
-  }
-
-  var len = iterable.length;
-  var called = false;
-  if (!len) {
-    return this.resolve([]);
-  }
-
-  var i = -1;
-  var promise = new this(INTERNAL);
-
-  while (++i < len) {
-    resolver(iterable[i]);
-  }
-  return promise;
-  function resolver(value) {
-    self.resolve(value).then(function (response) {
-      if (!called) {
-        called = true;
-        handlers.resolve(promise, response);
-      }
-    }, function (error) {
-      if (!called) {
-        called = true;
-        handlers.reject(promise, error);
-      }
-    });
-  }
-}
-
-},{"1":1}],3:[function(_dereq_,module,exports){
-(function (global){
-'use strict';
-if (typeof global.Promise !== 'function') {
-  global.Promise = _dereq_(2);
-}
-
-}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"2":2}],4:[function(_dereq_,module,exports){
-'use strict';
-
-var _typeof = typeof Symbol === "function" && typeof Symbol.iterator === "symbol" ? function (obj) { return typeof obj; } : function (obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; };
-
-function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
-
-function getIDB() {
-    /* global indexedDB,webkitIndexedDB,mozIndexedDB,OIndexedDB,msIndexedDB */
-    try {
-        if (typeof indexedDB !== 'undefined') {
-            return indexedDB;
-        }
-        if (typeof webkitIndexedDB !== 'undefined') {
-            return webkitIndexedDB;
-        }
-        if (typeof mozIndexedDB !== 'undefined') {
-            return mozIndexedDB;
-        }
-        if (typeof OIndexedDB !== 'undefined') {
-            return OIndexedDB;
-        }
-        if (typeof msIndexedDB !== 'undefined') {
-            return msIndexedDB;
-        }
-    } catch (e) {
-        return;
-    }
-}
-
-var idb = getIDB();
-
-function isIndexedDBValid() {
-    try {
-        // Initialize IndexedDB; fall back to vendor-prefixed versions
-        // if needed.
-        if (!idb) {
-            return false;
-        }
-        // We mimic PouchDB here;
-        //
-        // We test for openDatabase because IE Mobile identifies itself
-        // as Safari. Oh the lulz...
-        var isSafari = typeof openDatabase !== 'undefined' && /(Safari|iPhone|iPad|iPod)/.test(navigator.userAgent) && !/Chrome/.test(navigator.userAgent) && !/BlackBerry/.test(navigator.platform);
-
-        var hasFetch = typeof fetch === 'function' && fetch.toString().indexOf('[native code') !== -1;
-
-        // Safari <10.1 does not meet our requirements for IDB support (#5572)
-        // since Safari 10.1 shipped with fetch, we can use that to detect it
-        return (!isSafari || hasFetch) && typeof indexedDB !== 'undefined' &&
-        // some outdated implementations of IDB that appear on Samsung
-        // and HTC Android devices <4.4 are missing IDBKeyRange
-        // See: https://github.com/mozilla/localForage/issues/128
-        // See: https://github.com/mozilla/localForage/issues/272
-        typeof IDBKeyRange !== 'undefined';
-    } catch (e) {
-        return false;
-    }
-}
-
-// Abstracts constructing a Blob object, so it also works in older
-// browsers that don't support the native Blob constructor. (i.e.
-// old QtWebKit versions, at least).
-// Abstracts constructing a Blob object, so it also works in older
-// browsers that don't support the native Blob constructor. (i.e.
-// old QtWebKit versions, at least).
-function createBlob(parts, properties) {
-    /* global BlobBuilder,MSBlobBuilder,MozBlobBuilder,WebKitBlobBuilder */
-    parts = parts || [];
-    properties = properties || {};
-    try {
-        return new Blob(parts, properties);
-    } catch (e) {
-        if (e.name !== 'TypeError') {
-            throw e;
-        }
-        var Builder = typeof BlobBuilder !== 'undefined' ? BlobBuilder : typeof MSBlobBuilder !== 'undefined' ? MSBlobBuilder : typeof MozBlobBuilder !== 'undefined' ? MozBlobBuilder : WebKitBlobBuilder;
-        var builder = new Builder();
-        for (var i = 0; i < parts.length; i += 1) {
-            builder.append(parts[i]);
-        }
-        return builder.getBlob(properties.type);
-    }
-}
-
-// This is CommonJS because lie is an external dependency, so Rollup
-// can just ignore it.
-if (typeof Promise === 'undefined') {
-    // In the "nopromises" build this will just throw if you don't have
-    // a global promise object, but it would throw anyway later.
-    _dereq_(3);
-}
-var Promise$1 = Promise;
-
-function executeCallback(promise, callback) {
-    if (callback) {
-        promise.then(function (result) {
-            callback(null, result);
-        }, function (error) {
-            callback(error);
-        });
-    }
-}
-
-function executeTwoCallbacks(promise, callback, errorCallback) {
-    if (typeof callback === 'function') {
-        promise.then(callback);
-    }
-
-    if (typeof errorCallback === 'function') {
-        promise["catch"](errorCallback);
-    }
-}
-
-function normalizeKey(key) {
-    // Cast the key to a string, as that's all we can set as a key.
-    if (typeof key !== 'string') {
-        console.warn(key + ' used as a key, but it is not a string.');
-        key = String(key);
-    }
-
-    return key;
-}
-
-function getCallback() {
-    if (arguments.length && typeof arguments[arguments.length - 1] === 'function') {
-        return arguments[arguments.length - 1];
-    }
-}
-
-// Some code originally from async_storage.js in
-// [Gaia](https://github.com/mozilla-b2g/gaia).
-
-var DETECT_BLOB_SUPPORT_STORE = 'local-forage-detect-blob-support';
-var supportsBlobs = void 0;
-var dbContexts = {};
-var toString = Object.prototype.toString;
-
-// Transaction Modes
-var READ_ONLY = 'readonly';
-var READ_WRITE = 'readwrite';
-
-// Transform a binary string to an array buffer, because otherwise
-// weird stuff happens when you try to work with the binary string directly.
-// It is known.
-// From http://stackoverflow.com/questions/14967647/ (continues on next line)
-// encode-decode-image-with-base64-breaks-image (2013-04-21)
-function _binStringToArrayBuffer(bin) {
-    var length = bin.length;
-    var buf = new ArrayBuffer(length);
-    var arr = new Uint8Array(buf);
-    for (var i = 0; i < length; i++) {
-        arr[i] = bin.charCodeAt(i);
-    }
-    return buf;
-}
-
-//
-// Blobs are not supported in all versions of IndexedDB, notably
-// Chrome <37 and Android <5. In those versions, storing a blob will throw.
-//
-// Various other blob bugs exist in Chrome v37-42 (inclusive).
-// Detecting them is expensive and confusing to users, and Chrome 37-42
-// is at very low usage worldwide, so we do a hacky userAgent check instead.
-//
-// content-type bug: https://code.google.com/p/chromium/issues/detail?id=408120
-// 404 bug: https://code.google.com/p/chromium/issues/detail?id=447916
-// FileReader bug: https://code.google.com/p/chromium/issues/detail?id=447836
-//
-// Code borrowed from PouchDB. See:
-// https://github.com/pouchdb/pouchdb/blob/master/packages/node_modules/pouchdb-adapter-idb/src/blobSupport.js
-//
-function _checkBlobSupportWithoutCaching(idb) {
-    return new Promise$1(function (resolve) {
-        var txn = idb.transaction(DETECT_BLOB_SUPPORT_STORE, READ_WRITE);
-        var blob = createBlob(['']);
-        txn.objectStore(DETECT_BLOB_SUPPORT_STORE).put(blob, 'key');
-
-        txn.onabort = function (e) {
-            // If the transaction aborts now its due to not being able to
-            // write to the database, likely due to the disk being full
-            e.preventDefault();
-            e.stopPropagation();
-            resolve(false);
-        };
-
-        txn.oncomplete = function () {
-            var matchedChrome = navigator.userAgent.match(/Chrome\/(\d+)/);
-            var matchedEdge = navigator.userAgent.match(/Edge\//);
-            // MS Edge pretends to be Chrome 42:
-            // https://msdn.microsoft.com/en-us/library/hh869301%28v=vs.85%29.aspx
-            resolve(matchedEdge || !matchedChrome || parseInt(matchedChrome[1], 10) >= 43);
-        };
-    })["catch"](function () {
-        return false; // error, so assume unsupported
-    });
-}
-
-function _checkBlobSupport(idb) {
-    if (typeof supportsBlobs === 'boolean') {
-        return Promise$1.resolve(supportsBlobs);
-    }
-    return _checkBlobSupportWithoutCaching(idb).then(function (value) {
-        supportsBlobs = value;
-        return supportsBlobs;
-    });
-}
-
-function _deferReadiness(dbInfo) {
-    var dbContext = dbContexts[dbInfo.name];
-
-    // Create a deferred object representing the current database operation.
-    var deferredOperation = {};
-
-    deferredOperation.promise = new Promise$1(function (resolve, reject) {
-        deferredOperation.resolve = resolve;
-        deferredOperation.reject = reject;
-    });
-
-    // Enqueue the deferred operation.
-    dbContext.deferredOperations.push(deferredOperation);
-
-    // Chain its promise to the database readiness.
-    if (!dbContext.dbReady) {
-        dbContext.dbReady = deferredOperation.promise;
-    } else {
-        dbContext.dbReady = dbContext.dbReady.then(function () {
-            return deferredOperation.promise;
-        });
-    }
-}
-
-function _advanceReadiness(dbInfo) {
-    var dbContext = dbContexts[dbInfo.name];
-
-    // Dequeue a deferred operation.
-    var deferredOperation = dbContext.deferredOperations.pop();
-
-    // Resolve its promise (which is part of the database readiness
-    // chain of promises).
-    if (deferredOperation) {
-        deferredOperation.resolve();
-        return deferredOperation.promise;
-    }
-}
-
-function _rejectReadiness(dbInfo, err) {
-    var dbContext = dbContexts[dbInfo.name];
-
-    // Dequeue a deferred operation.
-    var deferredOperation = dbContext.deferredOperations.pop();
-
-    // Reject its promise (which is part of the database readiness
-    // chain of promises).
-    if (deferredOperation) {
-        deferredOperation.reject(err);
-        return deferredOperation.promise;
-    }
-}
-
-function _getConnection(dbInfo, upgradeNeeded) {
-    return new Promise$1(function (resolve, reject) {
-        dbContexts[dbInfo.name] = dbContexts[dbInfo.name] || createDbContext();
-
-        if (dbInfo.db) {
-            if (upgradeNeeded) {
-                _deferReadiness(dbInfo);
-                dbInfo.db.close();
-            } else {
-                return resolve(dbInfo.db);
+}(function() {
+    return function e(t, r, n) {
+        function o(i, u) {
+            if (!r[i]) {
+                if (!t[i]) {
+                    var s = "function" == typeof require && require;
+                    if (!u && s) return s(i, !0);
+                    if (a) return a(i, !0);
+                    var l = new Error("Cannot find module '" + i + "'");
+                    throw l.code = "MODULE_NOT_FOUND", l
+                }
+                var c = r[i] = {
+                    exports: {}
+                };
+                t[i][0].call(c.exports, function(e) {
+                    var r = t[i][1][e];
+                    return o(r || e)
+                }, c, c.exports, e, t, r, n)
             }
+            return r[i].exports
         }
-
-        var dbArgs = [dbInfo.name];
-
-        if (upgradeNeeded) {
-            dbArgs.push(dbInfo.version);
-        }
-
-        var openreq = idb.open.apply(idb, dbArgs);
-
-        if (upgradeNeeded) {
-            openreq.onupgradeneeded = function (e) {
-                var db = openreq.result;
-                try {
-                    db.createObjectStore(dbInfo.storeName);
-                    if (e.oldVersion <= 1) {
-                        // Added when support for blob shims was added
-                        db.createObjectStore(DETECT_BLOB_SUPPORT_STORE);
+        for (var a = "function" == typeof require && require, i = 0; i < n.length; i++) o(n[i]);
+        return o
+    }({
+        1: [function(e, t, r) {
+            (function(e) {
+                "use strict";
+                var r, n, o = e.MutationObserver || e.WebKitMutationObserver;
+                if (o) {
+                    var a = 0,
+                        i = new o(c),
+                        u = e.document.createTextNode("");
+                    i.observe(u, {
+                        characterData: !0
+                    }), r = function() {
+                        u.data = a = ++a % 2
                     }
-                } catch (ex) {
-                    if (ex.name === 'ConstraintError') {
-                        console.warn('The database "' + dbInfo.name + '"' + ' has been upgraded from version ' + e.oldVersion + ' to version ' + e.newVersion + ', but the storage "' + dbInfo.storeName + '" already exists.');
-                    } else {
-                        throw ex;
+                } else if (e.setImmediate || void 0 === e.MessageChannel) r = "document" in e && "onreadystatechange" in e.document.createElement("script") ? function() {
+                    var t = e.document.createElement("script");
+                    t.onreadystatechange = function() {
+                        c(), t.onreadystatechange = null, t.parentNode.removeChild(t), t = null
+                    }, e.document.documentElement.appendChild(t)
+                } : function() {
+                    setTimeout(c, 0)
+                };
+                else {
+                    var s = new e.MessageChannel;
+                    s.port1.onmessage = c, r = function() {
+                        s.port2.postMessage(0)
                     }
                 }
-            };
-        }
+                var l = [];
 
-        openreq.onerror = function (e) {
-            e.preventDefault();
-            reject(openreq.error);
-        };
-
-        openreq.onsuccess = function () {
-            resolve(openreq.result);
-            _advanceReadiness(dbInfo);
-        };
-    });
-}
-
-function _getOriginalConnection(dbInfo) {
-    return _getConnection(dbInfo, false);
-}
-
-function _getUpgradedConnection(dbInfo) {
-    return _getConnection(dbInfo, true);
-}
-
-function _isUpgradeNeeded(dbInfo, defaultVersion) {
-    if (!dbInfo.db) {
-        return true;
-    }
-
-    var isNewStore = !dbInfo.db.objectStoreNames.contains(dbInfo.storeName);
-    var isDowngrade = dbInfo.version < dbInfo.db.version;
-    var isUpgrade = dbInfo.version > dbInfo.db.version;
-
-    if (isDowngrade) {
-        // If the version is not the default one
-        // then warn for impossible downgrade.
-        if (dbInfo.version !== defaultVersion) {
-            console.warn('The database "' + dbInfo.name + '"' + " can't be downgraded from version " + dbInfo.db.version + ' to version ' + dbInfo.version + '.');
-        }
-        // Align the versions to prevent errors.
-        dbInfo.version = dbInfo.db.version;
-    }
-
-    if (isUpgrade || isNewStore) {
-        // If the store is new then increment the version (if needed).
-        // This will trigger an "upgradeneeded" event which is required
-        // for creating a store.
-        if (isNewStore) {
-            var incVersion = dbInfo.db.version + 1;
-            if (incVersion > dbInfo.version) {
-                dbInfo.version = incVersion;
-            }
-        }
-
-        return true;
-    }
-
-    return false;
-}
-
-// encode a blob for indexeddb engines that don't support blobs
-function _encodeBlob(blob) {
-    return new Promise$1(function (resolve, reject) {
-        var reader = new FileReader();
-        reader.onerror = reject;
-        reader.onloadend = function (e) {
-            var base64 = btoa(e.target.result || '');
-            resolve({
-                __local_forage_encoded_blob: true,
-                data: base64,
-                type: blob.type
-            });
-        };
-        reader.readAsBinaryString(blob);
-    });
-}
-
-// decode an encoded blob
-function _decodeBlob(encodedBlob) {
-    var arrayBuff = _binStringToArrayBuffer(atob(encodedBlob.data));
-    return createBlob([arrayBuff], { type: encodedBlob.type });
-}
-
-// is this one of our fancy encoded blobs?
-function _isEncodedBlob(value) {
-    return value && value.__local_forage_encoded_blob;
-}
-
-// Specialize the default `ready()` function by making it dependent
-// on the current database operations. Thus, the driver will be actually
-// ready when it's been initialized (default) *and* there are no pending
-// operations on the database (initiated by some other instances).
-function _fullyReady(callback) {
-    var self = this;
-
-    var promise = self._initReady().then(function () {
-        var dbContext = dbContexts[self._dbInfo.name];
-
-        if (dbContext && dbContext.dbReady) {
-            return dbContext.dbReady;
-        }
-    });
-
-    executeTwoCallbacks(promise, callback, callback);
-    return promise;
-}
-
-// Try to establish a new db connection to replace the
-// current one which is broken (i.e. experiencing
-// InvalidStateError while creating a transaction).
-function _tryReconnect(dbInfo) {
-    _deferReadiness(dbInfo);
-
-    var dbContext = dbContexts[dbInfo.name];
-    var forages = dbContext.forages;
-
-    for (var i = 0; i < forages.length; i++) {
-        var forage = forages[i];
-        if (forage._dbInfo.db) {
-            forage._dbInfo.db.close();
-            forage._dbInfo.db = null;
-        }
-    }
-    dbInfo.db = null;
-
-    return _getOriginalConnection(dbInfo).then(function (db) {
-        dbInfo.db = db;
-        if (_isUpgradeNeeded(dbInfo)) {
-            // Reopen the database for upgrading.
-            return _getUpgradedConnection(dbInfo);
-        }
-        return db;
-    }).then(function (db) {
-        // store the latest db reference
-        // in case the db was upgraded
-        dbInfo.db = dbContext.db = db;
-        for (var i = 0; i < forages.length; i++) {
-            forages[i]._dbInfo.db = db;
-        }
-    })["catch"](function (err) {
-        _rejectReadiness(dbInfo, err);
-        throw err;
-    });
-}
-
-// FF doesn't like Promises (micro-tasks) and IDDB store operations,
-// so we have to do it with callbacks
-function createTransaction(dbInfo, mode, callback, retries) {
-    if (retries === undefined) {
-        retries = 1;
-    }
-
-    try {
-        var tx = dbInfo.db.transaction(dbInfo.storeName, mode);
-        callback(null, tx);
-    } catch (err) {
-        if (retries > 0 && (!dbInfo.db || err.name === 'InvalidStateError' || err.name === 'NotFoundError')) {
-            return Promise$1.resolve().then(function () {
-                if (!dbInfo.db || err.name === 'NotFoundError' && !dbInfo.db.objectStoreNames.contains(dbInfo.storeName) && dbInfo.version <= dbInfo.db.version) {
-                    // increase the db version, to create the new ObjectStore
-                    if (dbInfo.db) {
-                        dbInfo.version = dbInfo.db.version + 1;
+                function c() {
+                    var e, t;
+                    n = !0;
+                    for (var r = l.length; r;) {
+                        for (t = l, l = [], e = -1; ++e < r;) t[e]();
+                        r = l.length
                     }
-                    // Reopen the database for upgrading.
-                    return _getUpgradedConnection(dbInfo);
+                    n = !1
                 }
-            }).then(function () {
-                return _tryReconnect(dbInfo).then(function () {
-                    createTransaction(dbInfo, mode, callback, retries - 1);
-                });
-            })["catch"](callback);
-        }
-
-        callback(err);
-    }
-}
-
-function createDbContext() {
-    return {
-        // Running localForages sharing a database.
-        forages: [],
-        // Shared database.
-        db: null,
-        // Database readiness (promise).
-        dbReady: null,
-        // Deferred operations on the database.
-        deferredOperations: []
-    };
-}
-
-// Open the IndexedDB database (automatically creates one if one didn't
-// previously exist), using any options set in the config.
-function _initStorage(options) {
-    var self = this;
-    var dbInfo = {
-        db: null
-    };
-
-    if (options) {
-        for (var i in options) {
-            dbInfo[i] = options[i];
-        }
-    }
-
-    // Get the current context of the database;
-    var dbContext = dbContexts[dbInfo.name];
-
-    // ...or create a new context.
-    if (!dbContext) {
-        dbContext = createDbContext();
-        // Register the new context in the global container.
-        dbContexts[dbInfo.name] = dbContext;
-    }
-
-    // Register itself as a running localForage in the current context.
-    dbContext.forages.push(self);
-
-    // Replace the default `ready()` function with the specialized one.
-    if (!self._initReady) {
-        self._initReady = self.ready;
-        self.ready = _fullyReady;
-    }
-
-    // Create an array of initialization states of the related localForages.
-    var initPromises = [];
-
-    function ignoreErrors() {
-        // Don't handle errors here,
-        // just makes sure related localForages aren't pending.
-        return Promise$1.resolve();
-    }
-
-    for (var j = 0; j < dbContext.forages.length; j++) {
-        var forage = dbContext.forages[j];
-        if (forage !== self) {
-            // Don't wait for itself...
-            initPromises.push(forage._initReady()["catch"](ignoreErrors));
-        }
-    }
-
-    // Take a snapshot of the related localForages.
-    var forages = dbContext.forages.slice(0);
-
-    // Initialize the connection process only when
-    // all the related localForages aren't pending.
-    return Promise$1.all(initPromises).then(function () {
-        dbInfo.db = dbContext.db;
-        // Get the connection or open a new one without upgrade.
-        return _getOriginalConnection(dbInfo);
-    }).then(function (db) {
-        dbInfo.db = db;
-        if (_isUpgradeNeeded(dbInfo, self._defaultConfig.version)) {
-            // Reopen the database for upgrading.
-            return _getUpgradedConnection(dbInfo);
-        }
-        return db;
-    }).then(function (db) {
-        dbInfo.db = dbContext.db = db;
-        self._dbInfo = dbInfo;
-        // Share the final connection amongst related localForages.
-        for (var k = 0; k < forages.length; k++) {
-            var forage = forages[k];
-            if (forage !== self) {
-                // Self is already up-to-date.
-                forage._dbInfo.db = dbInfo.db;
-                forage._dbInfo.version = dbInfo.version;
-            }
-        }
-    });
-}
-
-function getItem(key, callback) {
-    var self = this;
-
-    key = normalizeKey(key);
-
-    var promise = new Promise$1(function (resolve, reject) {
-        self.ready().then(function () {
-            createTransaction(self._dbInfo, READ_ONLY, function (err, transaction) {
-                if (err) {
-                    return reject(err);
+                t.exports = function(e) {
+                    1 !== l.push(e) || n || r()
                 }
-
-                try {
-                    var store = transaction.objectStore(self._dbInfo.storeName);
-                    var req = store.get(key);
-
-                    req.onsuccess = function () {
-                        var value = req.result;
-                        if (value === undefined) {
-                            value = null;
-                        }
-                        if (_isEncodedBlob(value)) {
-                            value = _decodeBlob(value);
-                        }
-                        resolve(value);
-                    };
-
-                    req.onerror = function () {
-                        reject(req.error);
-                    };
-                } catch (e) {
-                    reject(e);
-                }
-            });
-        })["catch"](reject);
-    });
-
-    executeCallback(promise, callback);
-    return promise;
-}
-
-// Iterate over all items stored in database.
-function iterate(iterator, callback) {
-    var self = this;
-
-    var promise = new Promise$1(function (resolve, reject) {
-        self.ready().then(function () {
-            createTransaction(self._dbInfo, READ_ONLY, function (err, transaction) {
-                if (err) {
-                    return reject(err);
-                }
-
-                try {
-                    var store = transaction.objectStore(self._dbInfo.storeName);
-                    var req = store.openCursor();
-                    var iterationNumber = 1;
-
-                    req.onsuccess = function () {
-                        var cursor = req.result;
-
-                        if (cursor) {
-                            var value = cursor.value;
-                            if (_isEncodedBlob(value)) {
-                                value = _decodeBlob(value);
-                            }
-                            var result = iterator(value, cursor.key, iterationNumber++);
-
-                            // when the iterator callback retuns any
-                            // (non-`undefined`) value, then we stop
-                            // the iteration immediately
-                            if (result !== void 0) {
-                                resolve(result);
-                            } else {
-                                cursor["continue"]();
-                            }
-                        } else {
-                            resolve();
-                        }
-                    };
-
-                    req.onerror = function () {
-                        reject(req.error);
-                    };
-                } catch (e) {
-                    reject(e);
-                }
-            });
-        })["catch"](reject);
-    });
-
-    executeCallback(promise, callback);
-
-    return promise;
-}
-
-function setItem(key, value, callback) {
-    var self = this;
-
-    key = normalizeKey(key);
-
-    var promise = new Promise$1(function (resolve, reject) {
-        var dbInfo;
-        self.ready().then(function () {
-            dbInfo = self._dbInfo;
-            if (toString.call(value) === '[object Blob]') {
-                return _checkBlobSupport(dbInfo.db).then(function (blobSupport) {
-                    if (blobSupport) {
-                        return value;
-                    }
-                    return _encodeBlob(value);
-                });
-            }
-            return value;
-        }).then(function (value) {
-            createTransaction(self._dbInfo, READ_WRITE, function (err, transaction) {
-                if (err) {
-                    return reject(err);
-                }
-
-                try {
-                    var store = transaction.objectStore(self._dbInfo.storeName);
-
-                    // The reason we don't _save_ null is because IE 10 does
-                    // not support saving the `null` type in IndexedDB. How
-                    // ironic, given the bug below!
-                    // See: https://github.com/mozilla/localForage/issues/161
-                    if (value === null) {
-                        value = undefined;
-                    }
-
-                    var req = store.put(value, key);
-
-                    transaction.oncomplete = function () {
-                        // Cast to undefined so the value passed to
-                        // callback/promise is the same as what one would get out
-                        // of `getItem()` later. This leads to some weirdness
-                        // (setItem('foo', undefined) will return `null`), but
-                        // it's not my fault localStorage is our baseline and that
-                        // it's weird.
-                        if (value === undefined) {
-                            value = null;
-                        }
-
-                        resolve(value);
-                    };
-                    transaction.onabort = transaction.onerror = function () {
-                        var err = req.error ? req.error : req.transaction.error;
-                        reject(err);
-                    };
-                } catch (e) {
-                    reject(e);
-                }
-            });
-        })["catch"](reject);
-    });
-
-    executeCallback(promise, callback);
-    return promise;
-}
-
-function removeItem(key, callback) {
-    var self = this;
-
-    key = normalizeKey(key);
-
-    var promise = new Promise$1(function (resolve, reject) {
-        self.ready().then(function () {
-            createTransaction(self._dbInfo, READ_WRITE, function (err, transaction) {
-                if (err) {
-                    return reject(err);
-                }
-
-                try {
-                    var store = transaction.objectStore(self._dbInfo.storeName);
-                    // We use a Grunt task to make this safe for IE and some
-                    // versions of Android (including those used by Cordova).
-                    // Normally IE won't like `.delete()` and will insist on
-                    // using `['delete']()`, but we have a build step that
-                    // fixes this for us now.
-                    var req = store["delete"](key);
-                    transaction.oncomplete = function () {
-                        resolve();
-                    };
-
-                    transaction.onerror = function () {
-                        reject(req.error);
-                    };
-
-                    // The request will be also be aborted if we've exceeded our storage
-                    // space.
-                    transaction.onabort = function () {
-                        var err = req.error ? req.error : req.transaction.error;
-                        reject(err);
-                    };
-                } catch (e) {
-                    reject(e);
-                }
-            });
-        })["catch"](reject);
-    });
-
-    executeCallback(promise, callback);
-    return promise;
-}
-
-function clear(callback) {
-    var self = this;
-
-    var promise = new Promise$1(function (resolve, reject) {
-        self.ready().then(function () {
-            createTransaction(self._dbInfo, READ_WRITE, function (err, transaction) {
-                if (err) {
-                    return reject(err);
-                }
-
-                try {
-                    var store = transaction.objectStore(self._dbInfo.storeName);
-                    var req = store.clear();
-
-                    transaction.oncomplete = function () {
-                        resolve();
-                    };
-
-                    transaction.onabort = transaction.onerror = function () {
-                        var err = req.error ? req.error : req.transaction.error;
-                        reject(err);
-                    };
-                } catch (e) {
-                    reject(e);
-                }
-            });
-        })["catch"](reject);
-    });
-
-    executeCallback(promise, callback);
-    return promise;
-}
-
-function length(callback) {
-    var self = this;
-
-    var promise = new Promise$1(function (resolve, reject) {
-        self.ready().then(function () {
-            createTransaction(self._dbInfo, READ_ONLY, function (err, transaction) {
-                if (err) {
-                    return reject(err);
-                }
-
-                try {
-                    var store = transaction.objectStore(self._dbInfo.storeName);
-                    var req = store.count();
-
-                    req.onsuccess = function () {
-                        resolve(req.result);
-                    };
-
-                    req.onerror = function () {
-                        reject(req.error);
-                    };
-                } catch (e) {
-                    reject(e);
-                }
-            });
-        })["catch"](reject);
-    });
-
-    executeCallback(promise, callback);
-    return promise;
-}
-
-function key(n, callback) {
-    var self = this;
-
-    var promise = new Promise$1(function (resolve, reject) {
-        if (n < 0) {
-            resolve(null);
-
-            return;
-        }
-
-        self.ready().then(function () {
-            createTransaction(self._dbInfo, READ_ONLY, function (err, transaction) {
-                if (err) {
-                    return reject(err);
-                }
-
-                try {
-                    var store = transaction.objectStore(self._dbInfo.storeName);
-                    var advanced = false;
-                    var req = store.openCursor();
-
-                    req.onsuccess = function () {
-                        var cursor = req.result;
-                        if (!cursor) {
-                            // this means there weren't enough keys
-                            resolve(null);
-
-                            return;
-                        }
-
-                        if (n === 0) {
-                            // We have the first key, return it if that's what they
-                            // wanted.
-                            resolve(cursor.key);
-                        } else {
-                            if (!advanced) {
-                                // Otherwise, ask the cursor to skip ahead n
-                                // records.
-                                advanced = true;
-                                cursor.advance(n);
-                            } else {
-                                // When we get here, we've got the nth key.
-                                resolve(cursor.key);
-                            }
-                        }
-                    };
-
-                    req.onerror = function () {
-                        reject(req.error);
-                    };
-                } catch (e) {
-                    reject(e);
-                }
-            });
-        })["catch"](reject);
-    });
-
-    executeCallback(promise, callback);
-    return promise;
-}
-
-function keys(callback) {
-    var self = this;
-
-    var promise = new Promise$1(function (resolve, reject) {
-        self.ready().then(function () {
-            createTransaction(self._dbInfo, READ_ONLY, function (err, transaction) {
-                if (err) {
-                    return reject(err);
-                }
-
-                try {
-                    var store = transaction.objectStore(self._dbInfo.storeName);
-                    var req = store.openCursor();
-                    var keys = [];
-
-                    req.onsuccess = function () {
-                        var cursor = req.result;
-
-                        if (!cursor) {
-                            resolve(keys);
-                            return;
-                        }
-
-                        keys.push(cursor.key);
-                        cursor["continue"]();
-                    };
-
-                    req.onerror = function () {
-                        reject(req.error);
-                    };
-                } catch (e) {
-                    reject(e);
-                }
-            });
-        })["catch"](reject);
-    });
-
-    executeCallback(promise, callback);
-    return promise;
-}
-
-function dropInstance(options, callback) {
-    callback = getCallback.apply(this, arguments);
-
-    var currentConfig = this.config();
-    options = typeof options !== 'function' && options || {};
-    if (!options.name) {
-        options.name = options.name || currentConfig.name;
-        options.storeName = options.storeName || currentConfig.storeName;
-    }
-
-    var self = this;
-    var promise;
-    if (!options.name) {
-        promise = Promise$1.reject('Invalid arguments');
-    } else {
-        var isCurrentDb = options.name === currentConfig.name && self._dbInfo.db;
-
-        var dbPromise = isCurrentDb ? Promise$1.resolve(self._dbInfo.db) : _getOriginalConnection(options).then(function (db) {
-            var dbContext = dbContexts[options.name];
-            var forages = dbContext.forages;
-            dbContext.db = db;
-            for (var i = 0; i < forages.length; i++) {
-                forages[i]._dbInfo.db = db;
-            }
-            return db;
-        });
-
-        if (!options.storeName) {
-            promise = dbPromise.then(function (db) {
-                _deferReadiness(options);
-
-                var dbContext = dbContexts[options.name];
-                var forages = dbContext.forages;
-
-                db.close();
-                for (var i = 0; i < forages.length; i++) {
-                    var forage = forages[i];
-                    forage._dbInfo.db = null;
-                }
-
-                var dropDBPromise = new Promise$1(function (resolve, reject) {
-                    var req = idb.deleteDatabase(options.name);
-
-                    req.onerror = req.onblocked = function (err) {
-                        var db = req.result;
-                        if (db) {
-                            db.close();
-                        }
-                        reject(err);
-                    };
-
-                    req.onsuccess = function () {
-                        var db = req.result;
-                        if (db) {
-                            db.close();
-                        }
-                        resolve(db);
-                    };
-                });
-
-                return dropDBPromise.then(function (db) {
-                    dbContext.db = db;
-                    for (var i = 0; i < forages.length; i++) {
-                        var _forage = forages[i];
-                        _advanceReadiness(_forage._dbInfo);
-                    }
-                })["catch"](function (err) {
-                    (_rejectReadiness(options, err) || Promise$1.resolve())["catch"](function () {});
-                    throw err;
-                });
-            });
-        } else {
-            promise = dbPromise.then(function (db) {
-                if (!db.objectStoreNames.contains(options.storeName)) {
-                    return;
-                }
-
-                var newVersion = db.version + 1;
-
-                _deferReadiness(options);
-
-                var dbContext = dbContexts[options.name];
-                var forages = dbContext.forages;
-
-                db.close();
-                for (var i = 0; i < forages.length; i++) {
-                    var forage = forages[i];
-                    forage._dbInfo.db = null;
-                    forage._dbInfo.version = newVersion;
-                }
-
-                var dropObjectPromise = new Promise$1(function (resolve, reject) {
-                    var req = idb.open(options.name, newVersion);
-
-                    req.onerror = function (err) {
-                        var db = req.result;
-                        db.close();
-                        reject(err);
-                    };
-
-                    req.onupgradeneeded = function () {
-                        var db = req.result;
-                        db.deleteObjectStore(options.storeName);
-                    };
-
-                    req.onsuccess = function () {
-                        var db = req.result;
-                        db.close();
-                        resolve(db);
-                    };
-                });
-
-                return dropObjectPromise.then(function (db) {
-                    dbContext.db = db;
-                    for (var j = 0; j < forages.length; j++) {
-                        var _forage2 = forages[j];
-                        _forage2._dbInfo.db = db;
-                        _advanceReadiness(_forage2._dbInfo);
-                    }
-                })["catch"](function (err) {
-                    (_rejectReadiness(options, err) || Promise$1.resolve())["catch"](function () {});
-                    throw err;
-                });
-            });
-        }
-    }
-
-    executeCallback(promise, callback);
-    return promise;
-}
-
-var asyncStorage = {
-    _driver: 'asyncStorage',
-    _initStorage: _initStorage,
-    _support: isIndexedDBValid(),
-    iterate: iterate,
-    getItem: getItem,
-    setItem: setItem,
-    removeItem: removeItem,
-    clear: clear,
-    length: length,
-    key: key,
-    keys: keys,
-    dropInstance: dropInstance
-};
-
-function isWebSQLValid() {
-    return typeof openDatabase === 'function';
-}
-
-// Sadly, the best way to save binary data in WebSQL/localStorage is serializing
-// it to Base64, so this is how we store it to prevent very strange errors with less
-// verbose ways of binary <-> string data storage.
-var BASE_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-
-var BLOB_TYPE_PREFIX = '~~local_forage_type~';
-var BLOB_TYPE_PREFIX_REGEX = /^~~local_forage_type~([^~]+)~/;
-
-var SERIALIZED_MARKER = '__lfsc__:';
-var SERIALIZED_MARKER_LENGTH = SERIALIZED_MARKER.length;
-
-// OMG the serializations!
-var TYPE_ARRAYBUFFER = 'arbf';
-var TYPE_BLOB = 'blob';
-var TYPE_INT8ARRAY = 'si08';
-var TYPE_UINT8ARRAY = 'ui08';
-var TYPE_UINT8CLAMPEDARRAY = 'uic8';
-var TYPE_INT16ARRAY = 'si16';
-var TYPE_INT32ARRAY = 'si32';
-var TYPE_UINT16ARRAY = 'ur16';
-var TYPE_UINT32ARRAY = 'ui32';
-var TYPE_FLOAT32ARRAY = 'fl32';
-var TYPE_FLOAT64ARRAY = 'fl64';
-var TYPE_SERIALIZED_MARKER_LENGTH = SERIALIZED_MARKER_LENGTH + TYPE_ARRAYBUFFER.length;
-
-var toString$1 = Object.prototype.toString;
-
-function stringToBuffer(serializedString) {
-    // Fill the string into a ArrayBuffer.
-    var bufferLength = serializedString.length * 0.75;
-    var len = serializedString.length;
-    var i;
-    var p = 0;
-    var encoded1, encoded2, encoded3, encoded4;
-
-    if (serializedString[serializedString.length - 1] === '=') {
-        bufferLength--;
-        if (serializedString[serializedString.length - 2] === '=') {
-            bufferLength--;
-        }
-    }
-
-    var buffer = new ArrayBuffer(bufferLength);
-    var bytes = new Uint8Array(buffer);
-
-    for (i = 0; i < len; i += 4) {
-        encoded1 = BASE_CHARS.indexOf(serializedString[i]);
-        encoded2 = BASE_CHARS.indexOf(serializedString[i + 1]);
-        encoded3 = BASE_CHARS.indexOf(serializedString[i + 2]);
-        encoded4 = BASE_CHARS.indexOf(serializedString[i + 3]);
-
-        /*jslint bitwise: true */
-        bytes[p++] = encoded1 << 2 | encoded2 >> 4;
-        bytes[p++] = (encoded2 & 15) << 4 | encoded3 >> 2;
-        bytes[p++] = (encoded3 & 3) << 6 | encoded4 & 63;
-    }
-    return buffer;
-}
-
-// Converts a buffer to a string to store, serialized, in the backend
-// storage library.
-function bufferToString(buffer) {
-    // base64-arraybuffer
-    var bytes = new Uint8Array(buffer);
-    var base64String = '';
-    var i;
-
-    for (i = 0; i < bytes.length; i += 3) {
-        /*jslint bitwise: true */
-        base64String += BASE_CHARS[bytes[i] >> 2];
-        base64String += BASE_CHARS[(bytes[i] & 3) << 4 | bytes[i + 1] >> 4];
-        base64String += BASE_CHARS[(bytes[i + 1] & 15) << 2 | bytes[i + 2] >> 6];
-        base64String += BASE_CHARS[bytes[i + 2] & 63];
-    }
-
-    if (bytes.length % 3 === 2) {
-        base64String = base64String.substring(0, base64String.length - 1) + '=';
-    } else if (bytes.length % 3 === 1) {
-        base64String = base64String.substring(0, base64String.length - 2) + '==';
-    }
-
-    return base64String;
-}
-
-// Serialize a value, afterwards executing a callback (which usually
-// instructs the `setItem()` callback/promise to be executed). This is how
-// we store binary data with localStorage.
-function serialize(value, callback) {
-    var valueType = '';
-    if (value) {
-        valueType = toString$1.call(value);
-    }
-
-    // Cannot use `value instanceof ArrayBuffer` or such here, as these
-    // checks fail when running the tests using casper.js...
-    //
-    // TODO: See why those tests fail and use a better solution.
-    if (value && (valueType === '[object ArrayBuffer]' || value.buffer && toString$1.call(value.buffer) === '[object ArrayBuffer]')) {
-        // Convert binary arrays to a string and prefix the string with
-        // a special marker.
-        var buffer;
-        var marker = SERIALIZED_MARKER;
-
-        if (value instanceof ArrayBuffer) {
-            buffer = value;
-            marker += TYPE_ARRAYBUFFER;
-        } else {
-            buffer = value.buffer;
-
-            if (valueType === '[object Int8Array]') {
-                marker += TYPE_INT8ARRAY;
-            } else if (valueType === '[object Uint8Array]') {
-                marker += TYPE_UINT8ARRAY;
-            } else if (valueType === '[object Uint8ClampedArray]') {
-                marker += TYPE_UINT8CLAMPEDARRAY;
-            } else if (valueType === '[object Int16Array]') {
-                marker += TYPE_INT16ARRAY;
-            } else if (valueType === '[object Uint16Array]') {
-                marker += TYPE_UINT16ARRAY;
-            } else if (valueType === '[object Int32Array]') {
-                marker += TYPE_INT32ARRAY;
-            } else if (valueType === '[object Uint32Array]') {
-                marker += TYPE_UINT32ARRAY;
-            } else if (valueType === '[object Float32Array]') {
-                marker += TYPE_FLOAT32ARRAY;
-            } else if (valueType === '[object Float64Array]') {
-                marker += TYPE_FLOAT64ARRAY;
-            } else {
-                callback(new Error('Failed to get type for BinaryArray'));
-            }
-        }
-
-        callback(marker + bufferToString(buffer));
-    } else if (valueType === '[object Blob]') {
-        // Conver the blob to a binaryArray and then to a string.
-        var fileReader = new FileReader();
-
-        fileReader.onload = function () {
-            // Backwards-compatible prefix for the blob type.
-            var str = BLOB_TYPE_PREFIX + value.type + '~' + bufferToString(this.result);
-
-            callback(SERIALIZED_MARKER + TYPE_BLOB + str);
-        };
-
-        fileReader.readAsArrayBuffer(value);
-    } else {
-        try {
-            callback(JSON.stringify(value));
-        } catch (e) {
-            console.error("Couldn't convert value into a JSON string: ", value);
-
-            callback(null, e);
-        }
-    }
-}
-
-// Deserialize data we've inserted into a value column/field. We place
-// special markers into our strings to mark them as encoded; this isn't
-// as nice as a meta field, but it's the only sane thing we can do whilst
-// keeping localStorage support intact.
-//
-// Oftentimes this will just deserialize JSON content, but if we have a
-// special marker (SERIALIZED_MARKER, defined above), we will extract
-// some kind of arraybuffer/binary data/typed array out of the string.
-function deserialize(value) {
-    // If we haven't marked this string as being specially serialized (i.e.
-    // something other than serialized JSON), we can just return it and be
-    // done with it.
-    if (value.substring(0, SERIALIZED_MARKER_LENGTH) !== SERIALIZED_MARKER) {
-        return JSON.parse(value);
-    }
-
-    // The following code deals with deserializing some kind of Blob or
-    // TypedArray. First we separate out the type of data we're dealing
-    // with from the data itself.
-    var serializedString = value.substring(TYPE_SERIALIZED_MARKER_LENGTH);
-    var type = value.substring(SERIALIZED_MARKER_LENGTH, TYPE_SERIALIZED_MARKER_LENGTH);
-
-    var blobType;
-    // Backwards-compatible blob type serialization strategy.
-    // DBs created with older versions of localForage will simply not have the blob type.
-    if (type === TYPE_BLOB && BLOB_TYPE_PREFIX_REGEX.test(serializedString)) {
-        var matcher = serializedString.match(BLOB_TYPE_PREFIX_REGEX);
-        blobType = matcher[1];
-        serializedString = serializedString.substring(matcher[0].length);
-    }
-    var buffer = stringToBuffer(serializedString);
-
-    // Return the right type based on the code/type set during
-    // serialization.
-    switch (type) {
-        case TYPE_ARRAYBUFFER:
-            return buffer;
-        case TYPE_BLOB:
-            return createBlob([buffer], { type: blobType });
-        case TYPE_INT8ARRAY:
-            return new Int8Array(buffer);
-        case TYPE_UINT8ARRAY:
-            return new Uint8Array(buffer);
-        case TYPE_UINT8CLAMPEDARRAY:
-            return new Uint8ClampedArray(buffer);
-        case TYPE_INT16ARRAY:
-            return new Int16Array(buffer);
-        case TYPE_UINT16ARRAY:
-            return new Uint16Array(buffer);
-        case TYPE_INT32ARRAY:
-            return new Int32Array(buffer);
-        case TYPE_UINT32ARRAY:
-            return new Uint32Array(buffer);
-        case TYPE_FLOAT32ARRAY:
-            return new Float32Array(buffer);
-        case TYPE_FLOAT64ARRAY:
-            return new Float64Array(buffer);
-        default:
-            throw new Error('Unkown type: ' + type);
-    }
-}
-
-var localforageSerializer = {
-    serialize: serialize,
-    deserialize: deserialize,
-    stringToBuffer: stringToBuffer,
-    bufferToString: bufferToString
-};
-
-/*
- * Includes code from:
- *
- * base64-arraybuffer
- * https://github.com/niklasvh/base64-arraybuffer
- *
- * Copyright (c) 2012 Niklas von Hertzen
- * Licensed under the MIT license.
- */
-
-function createDbTable(t, dbInfo, callback, errorCallback) {
-    t.executeSql('CREATE TABLE IF NOT EXISTS ' + dbInfo.storeName + ' ' + '(id INTEGER PRIMARY KEY, key unique, value)', [], callback, errorCallback);
-}
-
-// Open the WebSQL database (automatically creates one if one didn't
-// previously exist), using any options set in the config.
-function _initStorage$1(options) {
-    var self = this;
-    var dbInfo = {
-        db: null
-    };
-
-    if (options) {
-        for (var i in options) {
-            dbInfo[i] = typeof options[i] !== 'string' ? options[i].toString() : options[i];
-        }
-    }
-
-    var dbInfoPromise = new Promise$1(function (resolve, reject) {
-        // Open the database; the openDatabase API will automatically
-        // create it for us if it doesn't exist.
-        try {
-            dbInfo.db = openDatabase(dbInfo.name, String(dbInfo.version), dbInfo.description, dbInfo.size);
-        } catch (e) {
-            return reject(e);
-        }
-
-        // Create our key/value table if it doesn't exist.
-        dbInfo.db.transaction(function (t) {
-            createDbTable(t, dbInfo, function () {
-                self._dbInfo = dbInfo;
-                resolve();
-            }, function (t, error) {
-                reject(error);
-            });
-        }, reject);
-    });
-
-    dbInfo.serializer = localforageSerializer;
-    return dbInfoPromise;
-}
-
-function tryExecuteSql(t, dbInfo, sqlStatement, args, callback, errorCallback) {
-    t.executeSql(sqlStatement, args, callback, function (t, error) {
-        if (error.code === error.SYNTAX_ERR) {
-            t.executeSql('SELECT name FROM sqlite_master ' + "WHERE type='table' AND name = ?", [dbInfo.storeName], function (t, results) {
-                if (!results.rows.length) {
-                    // if the table is missing (was deleted)
-                    // re-create it table and retry
-                    createDbTable(t, dbInfo, function () {
-                        t.executeSql(sqlStatement, args, callback, errorCallback);
-                    }, errorCallback);
-                } else {
-                    errorCallback(t, error);
-                }
-            }, errorCallback);
-        } else {
-            errorCallback(t, error);
-        }
-    }, errorCallback);
-}
-
-function getItem$1(key, callback) {
-    var self = this;
-
-    key = normalizeKey(key);
-
-    var promise = new Promise$1(function (resolve, reject) {
-        self.ready().then(function () {
-            var dbInfo = self._dbInfo;
-            dbInfo.db.transaction(function (t) {
-                tryExecuteSql(t, dbInfo, 'SELECT * FROM ' + dbInfo.storeName + ' WHERE key = ? LIMIT 1', [key], function (t, results) {
-                    var result = results.rows.length ? results.rows.item(0).value : null;
-
-                    // Check to see if this is serialized content we need to
-                    // unpack.
-                    if (result) {
-                        result = dbInfo.serializer.deserialize(result);
-                    }
-
-                    resolve(result);
-                }, function (t, error) {
-                    reject(error);
-                });
-            });
-        })["catch"](reject);
-    });
-
-    executeCallback(promise, callback);
-    return promise;
-}
-
-function iterate$1(iterator, callback) {
-    var self = this;
-
-    var promise = new Promise$1(function (resolve, reject) {
-        self.ready().then(function () {
-            var dbInfo = self._dbInfo;
-
-            dbInfo.db.transaction(function (t) {
-                tryExecuteSql(t, dbInfo, 'SELECT * FROM ' + dbInfo.storeName, [], function (t, results) {
-                    var rows = results.rows;
-                    var length = rows.length;
-
-                    for (var i = 0; i < length; i++) {
-                        var item = rows.item(i);
-                        var result = item.value;
-
-                        // Check to see if this is serialized content
-                        // we need to unpack.
-                        if (result) {
-                            result = dbInfo.serializer.deserialize(result);
-                        }
-
-                        result = iterator(result, item.key, i + 1);
-
-                        // void(0) prevents problems with redefinition
-                        // of `undefined`.
-                        if (result !== void 0) {
-                            resolve(result);
-                            return;
-                        }
-                    }
-
-                    resolve();
-                }, function (t, error) {
-                    reject(error);
-                });
-            });
-        })["catch"](reject);
-    });
-
-    executeCallback(promise, callback);
-    return promise;
-}
-
-function _setItem(key, value, callback, retriesLeft) {
-    var self = this;
-
-    key = normalizeKey(key);
-
-    var promise = new Promise$1(function (resolve, reject) {
-        self.ready().then(function () {
-            // The localStorage API doesn't return undefined values in an
-            // "expected" way, so undefined is always cast to null in all
-            // drivers. See: https://github.com/mozilla/localForage/pull/42
-            if (value === undefined) {
-                value = null;
+            }).call(this, "undefined" != typeof global ? global : "undefined" != typeof self ? self : "undefined" != typeof window ? window : {})
+        }, {}],
+        2: [function(e, t, r) {
+            "use strict";
+            var n = e(1);
+
+            function o() {}
+            var a = {},
+                i = ["REJECTED"],
+                u = ["FULFILLED"],
+                s = ["PENDING"];
+
+            function l(e) {
+                if ("function" != typeof e) throw new TypeError("resolver must be a function");
+                this.state = s, this.queue = [], this.outcome = void 0, e !== o && m(this, e)
             }
 
-            // Save the original value to pass to the callback.
-            var originalValue = value;
-
-            var dbInfo = self._dbInfo;
-            dbInfo.serializer.serialize(value, function (value, error) {
-                if (error) {
-                    reject(error);
-                } else {
-                    dbInfo.db.transaction(function (t) {
-                        tryExecuteSql(t, dbInfo, 'INSERT OR REPLACE INTO ' + dbInfo.storeName + ' ' + '(key, value) VALUES (?, ?)', [key, value], function () {
-                            resolve(originalValue);
-                        }, function (t, error) {
-                            reject(error);
-                        });
-                    }, function (sqlError) {
-                        // The transaction failed; check
-                        // to see if it's a quota error.
-                        if (sqlError.code === sqlError.QUOTA_ERR) {
-                            // We reject the callback outright for now, but
-                            // it's worth trying to re-run the transaction.
-                            // Even if the user accepts the prompt to use
-                            // more storage on Safari, this error will
-                            // be called.
-                            //
-                            // Try to re-run the transaction.
-                            if (retriesLeft > 0) {
-                                resolve(_setItem.apply(self, [key, originalValue, callback, retriesLeft - 1]));
-                                return;
-                            }
-                            reject(sqlError);
-                        }
-                    });
-                }
-            });
-        })["catch"](reject);
-    });
-
-    executeCallback(promise, callback);
-    return promise;
-}
-
-function setItem$1(key, value, callback) {
-    return _setItem.apply(this, [key, value, callback, 1]);
-}
-
-function removeItem$1(key, callback) {
-    var self = this;
-
-    key = normalizeKey(key);
-
-    var promise = new Promise$1(function (resolve, reject) {
-        self.ready().then(function () {
-            var dbInfo = self._dbInfo;
-            dbInfo.db.transaction(function (t) {
-                tryExecuteSql(t, dbInfo, 'DELETE FROM ' + dbInfo.storeName + ' WHERE key = ?', [key], function () {
-                    resolve();
-                }, function (t, error) {
-                    reject(error);
-                });
-            });
-        })["catch"](reject);
-    });
-
-    executeCallback(promise, callback);
-    return promise;
-}
-
-// Deletes every item in the table.
-// TODO: Find out if this resets the AUTO_INCREMENT number.
-function clear$1(callback) {
-    var self = this;
-
-    var promise = new Promise$1(function (resolve, reject) {
-        self.ready().then(function () {
-            var dbInfo = self._dbInfo;
-            dbInfo.db.transaction(function (t) {
-                tryExecuteSql(t, dbInfo, 'DELETE FROM ' + dbInfo.storeName, [], function () {
-                    resolve();
-                }, function (t, error) {
-                    reject(error);
-                });
-            });
-        })["catch"](reject);
-    });
-
-    executeCallback(promise, callback);
-    return promise;
-}
-
-// Does a simple `COUNT(key)` to get the number of items stored in
-// localForage.
-function length$1(callback) {
-    var self = this;
-
-    var promise = new Promise$1(function (resolve, reject) {
-        self.ready().then(function () {
-            var dbInfo = self._dbInfo;
-            dbInfo.db.transaction(function (t) {
-                // Ahhh, SQL makes this one soooooo easy.
-                tryExecuteSql(t, dbInfo, 'SELECT COUNT(key) as c FROM ' + dbInfo.storeName, [], function (t, results) {
-                    var result = results.rows.item(0).c;
-                    resolve(result);
-                }, function (t, error) {
-                    reject(error);
-                });
-            });
-        })["catch"](reject);
-    });
-
-    executeCallback(promise, callback);
-    return promise;
-}
-
-// Return the key located at key index X; essentially gets the key from a
-// `WHERE id = ?`. This is the most efficient way I can think to implement
-// this rarely-used (in my experience) part of the API, but it can seem
-// inconsistent, because we do `INSERT OR REPLACE INTO` on `setItem()`, so
-// the ID of each key will change every time it's updated. Perhaps a stored
-// procedure for the `setItem()` SQL would solve this problem?
-// TODO: Don't change ID on `setItem()`.
-function key$1(n, callback) {
-    var self = this;
-
-    var promise = new Promise$1(function (resolve, reject) {
-        self.ready().then(function () {
-            var dbInfo = self._dbInfo;
-            dbInfo.db.transaction(function (t) {
-                tryExecuteSql(t, dbInfo, 'SELECT key FROM ' + dbInfo.storeName + ' WHERE id = ? LIMIT 1', [n + 1], function (t, results) {
-                    var result = results.rows.length ? results.rows.item(0).key : null;
-                    resolve(result);
-                }, function (t, error) {
-                    reject(error);
-                });
-            });
-        })["catch"](reject);
-    });
-
-    executeCallback(promise, callback);
-    return promise;
-}
-
-function keys$1(callback) {
-    var self = this;
-
-    var promise = new Promise$1(function (resolve, reject) {
-        self.ready().then(function () {
-            var dbInfo = self._dbInfo;
-            dbInfo.db.transaction(function (t) {
-                tryExecuteSql(t, dbInfo, 'SELECT key FROM ' + dbInfo.storeName, [], function (t, results) {
-                    var keys = [];
-
-                    for (var i = 0; i < results.rows.length; i++) {
-                        keys.push(results.rows.item(i).key);
-                    }
-
-                    resolve(keys);
-                }, function (t, error) {
-                    reject(error);
-                });
-            });
-        })["catch"](reject);
-    });
-
-    executeCallback(promise, callback);
-    return promise;
-}
-
-// https://www.w3.org/TR/webdatabase/#databases
-// > There is no way to enumerate or delete the databases available for an origin from this API.
-function getAllStoreNames(db) {
-    return new Promise$1(function (resolve, reject) {
-        db.transaction(function (t) {
-            t.executeSql('SELECT name FROM sqlite_master ' + "WHERE type='table' AND name <> '__WebKitDatabaseInfoTable__'", [], function (t, results) {
-                var storeNames = [];
-
-                for (var i = 0; i < results.rows.length; i++) {
-                    storeNames.push(results.rows.item(i).name);
-                }
-
-                resolve({
-                    db: db,
-                    storeNames: storeNames
-                });
-            }, function (t, error) {
-                reject(error);
-            });
-        }, function (sqlError) {
-            reject(sqlError);
-        });
-    });
-}
-
-function dropInstance$1(options, callback) {
-    callback = getCallback.apply(this, arguments);
-
-    var currentConfig = this.config();
-    options = typeof options !== 'function' && options || {};
-    if (!options.name) {
-        options.name = options.name || currentConfig.name;
-        options.storeName = options.storeName || currentConfig.storeName;
-    }
-
-    var self = this;
-    var promise;
-    if (!options.name) {
-        promise = Promise$1.reject('Invalid arguments');
-    } else {
-        promise = new Promise$1(function (resolve) {
-            var db;
-            if (options.name === currentConfig.name) {
-                // use the db reference of the current instance
-                db = self._dbInfo.db;
-            } else {
-                db = openDatabase(options.name, '', '', 0);
+            function c(e, t, r) {
+                this.promise = e, "function" == typeof t && (this.onFulfilled = t, this.callFulfilled = this.otherCallFulfilled), "function" == typeof r && (this.onRejected = r, this.callRejected = this.otherCallRejected)
             }
 
-            if (!options.storeName) {
-                // drop all database tables
-                resolve(getAllStoreNames(db));
-            } else {
-                resolve({
-                    db: db,
-                    storeNames: [options.storeName]
-                });
-            }
-        }).then(function (operationInfo) {
-            return new Promise$1(function (resolve, reject) {
-                operationInfo.db.transaction(function (t) {
-                    function dropTable(storeName) {
-                        return new Promise$1(function (resolve, reject) {
-                            t.executeSql('DROP TABLE IF EXISTS ' + storeName, [], function () {
-                                resolve();
-                            }, function (t, error) {
-                                reject(error);
-                            });
-                        });
-                    }
-
-                    var operations = [];
-                    for (var i = 0, len = operationInfo.storeNames.length; i < len; i++) {
-                        operations.push(dropTable(operationInfo.storeNames[i]));
-                    }
-
-                    Promise$1.all(operations).then(function () {
-                        resolve();
-                    })["catch"](function (e) {
-                        reject(e);
-                    });
-                }, function (sqlError) {
-                    reject(sqlError);
-                });
-            });
-        });
-    }
-
-    executeCallback(promise, callback);
-    return promise;
-}
-
-var webSQLStorage = {
-    _driver: 'webSQLStorage',
-    _initStorage: _initStorage$1,
-    _support: isWebSQLValid(),
-    iterate: iterate$1,
-    getItem: getItem$1,
-    setItem: setItem$1,
-    removeItem: removeItem$1,
-    clear: clear$1,
-    length: length$1,
-    key: key$1,
-    keys: keys$1,
-    dropInstance: dropInstance$1
-};
-
-function isLocalStorageValid() {
-    try {
-        return typeof localStorage !== 'undefined' && 'setItem' in localStorage &&
-        // in IE8 typeof localStorage.setItem === 'object'
-        !!localStorage.setItem;
-    } catch (e) {
-        return false;
-    }
-}
-
-function _getKeyPrefix(options, defaultConfig) {
-    var keyPrefix = options.name + '/';
-
-    if (options.storeName !== defaultConfig.storeName) {
-        keyPrefix += options.storeName + '/';
-    }
-    return keyPrefix;
-}
-
-// Check if localStorage throws when saving an item
-function checkIfLocalStorageThrows() {
-    var localStorageTestKey = '_localforage_support_test';
-
-    try {
-        localStorage.setItem(localStorageTestKey, true);
-        localStorage.removeItem(localStorageTestKey);
-
-        return false;
-    } catch (e) {
-        return true;
-    }
-}
-
-// Check if localStorage is usable and allows to save an item
-// This method checks if localStorage is usable in Safari Private Browsing
-// mode, or in any other case where the available quota for localStorage
-// is 0 and there wasn't any saved items yet.
-function _isLocalStorageUsable() {
-    return !checkIfLocalStorageThrows() || localStorage.length > 0;
-}
-
-// Config the localStorage backend, using options set in the config.
-function _initStorage$2(options) {
-    var self = this;
-    var dbInfo = {};
-    if (options) {
-        for (var i in options) {
-            dbInfo[i] = options[i];
-        }
-    }
-
-    dbInfo.keyPrefix = _getKeyPrefix(options, self._defaultConfig);
-
-    if (!_isLocalStorageUsable()) {
-        return Promise$1.reject();
-    }
-
-    self._dbInfo = dbInfo;
-    dbInfo.serializer = localforageSerializer;
-
-    return Promise$1.resolve();
-}
-
-// Remove all keys from the datastore, effectively destroying all data in
-// the app's key/value store!
-function clear$2(callback) {
-    var self = this;
-    var promise = self.ready().then(function () {
-        var keyPrefix = self._dbInfo.keyPrefix;
-
-        for (var i = localStorage.length - 1; i >= 0; i--) {
-            var key = localStorage.key(i);
-
-            if (key.indexOf(keyPrefix) === 0) {
-                localStorage.removeItem(key);
-            }
-        }
-    });
-
-    executeCallback(promise, callback);
-    return promise;
-}
-
-// Retrieve an item from the store. Unlike the original async_storage
-// library in Gaia, we don't modify return values at all. If a key's value
-// is `undefined`, we pass that value to the callback function.
-function getItem$2(key, callback) {
-    var self = this;
-
-    key = normalizeKey(key);
-
-    var promise = self.ready().then(function () {
-        var dbInfo = self._dbInfo;
-        var result = localStorage.getItem(dbInfo.keyPrefix + key);
-
-        // If a result was found, parse it from the serialized
-        // string into a JS object. If result isn't truthy, the key
-        // is likely undefined and we'll pass it straight to the
-        // callback.
-        if (result) {
-            result = dbInfo.serializer.deserialize(result);
-        }
-
-        return result;
-    });
-
-    executeCallback(promise, callback);
-    return promise;
-}
-
-// Iterate over all items in the store.
-function iterate$2(iterator, callback) {
-    var self = this;
-
-    var promise = self.ready().then(function () {
-        var dbInfo = self._dbInfo;
-        var keyPrefix = dbInfo.keyPrefix;
-        var keyPrefixLength = keyPrefix.length;
-        var length = localStorage.length;
-
-        // We use a dedicated iterator instead of the `i` variable below
-        // so other keys we fetch in localStorage aren't counted in
-        // the `iterationNumber` argument passed to the `iterate()`
-        // callback.
-        //
-        // See: github.com/mozilla/localForage/pull/435#discussion_r38061530
-        var iterationNumber = 1;
-
-        for (var i = 0; i < length; i++) {
-            var key = localStorage.key(i);
-            if (key.indexOf(keyPrefix) !== 0) {
-                continue;
-            }
-            var value = localStorage.getItem(key);
-
-            // If a result was found, parse it from the serialized
-            // string into a JS object. If result isn't truthy, the
-            // key is likely undefined and we'll pass it straight
-            // to the iterator.
-            if (value) {
-                value = dbInfo.serializer.deserialize(value);
-            }
-
-            value = iterator(value, key.substring(keyPrefixLength), iterationNumber++);
-
-            if (value !== void 0) {
-                return value;
-            }
-        }
-    });
-
-    executeCallback(promise, callback);
-    return promise;
-}
-
-// Same as localStorage's key() method, except takes a callback.
-function key$2(n, callback) {
-    var self = this;
-    var promise = self.ready().then(function () {
-        var dbInfo = self._dbInfo;
-        var result;
-        try {
-            result = localStorage.key(n);
-        } catch (error) {
-            result = null;
-        }
-
-        // Remove the prefix from the key, if a key is found.
-        if (result) {
-            result = result.substring(dbInfo.keyPrefix.length);
-        }
-
-        return result;
-    });
-
-    executeCallback(promise, callback);
-    return promise;
-}
-
-function keys$2(callback) {
-    var self = this;
-    var promise = self.ready().then(function () {
-        var dbInfo = self._dbInfo;
-        var length = localStorage.length;
-        var keys = [];
-
-        for (var i = 0; i < length; i++) {
-            var itemKey = localStorage.key(i);
-            if (itemKey.indexOf(dbInfo.keyPrefix) === 0) {
-                keys.push(itemKey.substring(dbInfo.keyPrefix.length));
-            }
-        }
-
-        return keys;
-    });
-
-    executeCallback(promise, callback);
-    return promise;
-}
-
-// Supply the number of keys in the datastore to the callback function.
-function length$2(callback) {
-    var self = this;
-    var promise = self.keys().then(function (keys) {
-        return keys.length;
-    });
-
-    executeCallback(promise, callback);
-    return promise;
-}
-
-// Remove an item from the store, nice and simple.
-function removeItem$2(key, callback) {
-    var self = this;
-
-    key = normalizeKey(key);
-
-    var promise = self.ready().then(function () {
-        var dbInfo = self._dbInfo;
-        localStorage.removeItem(dbInfo.keyPrefix + key);
-    });
-
-    executeCallback(promise, callback);
-    return promise;
-}
-
-// Set a key's value and run an optional callback once the value is set.
-// Unlike Gaia's implementation, the callback function is passed the value,
-// in case you want to operate on that value only after you're sure it
-// saved, or something like that.
-function setItem$2(key, value, callback) {
-    var self = this;
-
-    key = normalizeKey(key);
-
-    var promise = self.ready().then(function () {
-        // Convert undefined values to null.
-        // https://github.com/mozilla/localForage/pull/42
-        if (value === undefined) {
-            value = null;
-        }
-
-        // Save the original value to pass to the callback.
-        var originalValue = value;
-
-        return new Promise$1(function (resolve, reject) {
-            var dbInfo = self._dbInfo;
-            dbInfo.serializer.serialize(value, function (value, error) {
-                if (error) {
-                    reject(error);
-                } else {
+            function d(e, t, r) {
+                n(function() {
+                    var n;
                     try {
-                        localStorage.setItem(dbInfo.keyPrefix + key, value);
-                        resolve(originalValue);
-                    } catch (e) {
-                        // localStorage capacity exceeded.
-                        // TODO: Make this a specific error/event.
-                        if (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED') {
-                            reject(e);
-                        }
-                        reject(e);
+                        n = t(r)
+                    } catch (t) {
+                        return a.reject(e, t)
                     }
-                }
-            });
-        });
-    });
-
-    executeCallback(promise, callback);
-    return promise;
-}
-
-function dropInstance$2(options, callback) {
-    callback = getCallback.apply(this, arguments);
-
-    options = typeof options !== 'function' && options || {};
-    if (!options.name) {
-        var currentConfig = this.config();
-        options.name = options.name || currentConfig.name;
-        options.storeName = options.storeName || currentConfig.storeName;
-    }
-
-    var self = this;
-    var promise;
-    if (!options.name) {
-        promise = Promise$1.reject('Invalid arguments');
-    } else {
-        promise = new Promise$1(function (resolve) {
-            if (!options.storeName) {
-                resolve(options.name + '/');
-            } else {
-                resolve(_getKeyPrefix(options, self._defaultConfig));
+                    n === e ? a.reject(e, new TypeError("Cannot resolve promise with itself")) : a.resolve(e, n)
+                })
             }
-        }).then(function (keyPrefix) {
-            for (var i = localStorage.length - 1; i >= 0; i--) {
-                var key = localStorage.key(i);
 
-                if (key.indexOf(keyPrefix) === 0) {
-                    localStorage.removeItem(key);
+            function f(e) {
+                var t = e && e.then;
+                if (e && ("object" == typeof e || "function" == typeof e) && "function" == typeof t) return function() {
+                    t.apply(e, arguments)
                 }
             }
-        });
-    }
 
-    executeCallback(promise, callback);
-    return promise;
-}
+            function m(e, t) {
+                var r = !1;
 
-var localStorageWrapper = {
-    _driver: 'localStorageWrapper',
-    _initStorage: _initStorage$2,
-    _support: isLocalStorageValid(),
-    iterate: iterate$2,
-    getItem: getItem$2,
-    setItem: setItem$2,
-    removeItem: removeItem$2,
-    clear: clear$2,
-    length: length$2,
-    key: key$2,
-    keys: keys$2,
-    dropInstance: dropInstance$2
-};
-
-var sameValue = function sameValue(x, y) {
-    return x === y || typeof x === 'number' && typeof y === 'number' && isNaN(x) && isNaN(y);
-};
-
-var includes = function includes(array, searchElement) {
-    var len = array.length;
-    var i = 0;
-    while (i < len) {
-        if (sameValue(array[i], searchElement)) {
-            return true;
-        }
-        i++;
-    }
-
-    return false;
-};
-
-var isArray = Array.isArray || function (arg) {
-    return Object.prototype.toString.call(arg) === '[object Array]';
-};
-
-// Drivers are stored here when `defineDriver()` is called.
-// They are shared across all instances of localForage.
-var DefinedDrivers = {};
-
-var DriverSupport = {};
-
-var DefaultDrivers = {
-    INDEXEDDB: asyncStorage,
-    WEBSQL: webSQLStorage,
-    LOCALSTORAGE: localStorageWrapper
-};
-
-var DefaultDriverOrder = [DefaultDrivers.INDEXEDDB._driver, DefaultDrivers.WEBSQL._driver, DefaultDrivers.LOCALSTORAGE._driver];
-
-var OptionalDriverMethods = ['dropInstance'];
-
-var LibraryMethods = ['clear', 'getItem', 'iterate', 'key', 'keys', 'length', 'removeItem', 'setItem'].concat(OptionalDriverMethods);
-
-var DefaultConfig = {
-    description: '',
-    driver: DefaultDriverOrder.slice(),
-    name: 'localforage',
-    // Default DB size is _JUST UNDER_ 5MB, as it's the highest size
-    // we can use without a prompt.
-    size: 4980736,
-    storeName: 'keyvaluepairs',
-    version: 1.0
-};
-
-function callWhenReady(localForageInstance, libraryMethod) {
-    localForageInstance[libraryMethod] = function () {
-        var _args = arguments;
-        return localForageInstance.ready().then(function () {
-            return localForageInstance[libraryMethod].apply(localForageInstance, _args);
-        });
-    };
-}
-
-function extend() {
-    for (var i = 1; i < arguments.length; i++) {
-        var arg = arguments[i];
-
-        if (arg) {
-            for (var _key in arg) {
-                if (arg.hasOwnProperty(_key)) {
-                    if (isArray(arg[_key])) {
-                        arguments[0][_key] = arg[_key].slice();
-                    } else {
-                        arguments[0][_key] = arg[_key];
-                    }
-                }
-            }
-        }
-    }
-
-    return arguments[0];
-}
-
-var LocalForage = function () {
-    function LocalForage(options) {
-        _classCallCheck(this, LocalForage);
-
-        for (var driverTypeKey in DefaultDrivers) {
-            if (DefaultDrivers.hasOwnProperty(driverTypeKey)) {
-                var driver = DefaultDrivers[driverTypeKey];
-                var driverName = driver._driver;
-                this[driverTypeKey] = driverName;
-
-                if (!DefinedDrivers[driverName]) {
-                    // we don't need to wait for the promise,
-                    // since the default drivers can be defined
-                    // in a blocking manner
-                    this.defineDriver(driver);
-                }
-            }
-        }
-
-        this._defaultConfig = extend({}, DefaultConfig);
-        this._config = extend({}, this._defaultConfig, options);
-        this._driverSet = null;
-        this._initDriver = null;
-        this._ready = false;
-        this._dbInfo = null;
-
-        this._wrapLibraryMethodsWithReady();
-        this.setDriver(this._config.driver)["catch"](function () {});
-    }
-
-    // Set any config values for localForage; can be called anytime before
-    // the first API call (e.g. `getItem`, `setItem`).
-    // We loop through options so we don't overwrite existing config
-    // values.
-
-
-    LocalForage.prototype.config = function config(options) {
-        // If the options argument is an object, we use it to set values.
-        // Otherwise, we return either a specified config value or all
-        // config values.
-        if ((typeof options === 'undefined' ? 'undefined' : _typeof(options)) === 'object') {
-            // If localforage is ready and fully initialized, we can't set
-            // any new configuration values. Instead, we return an error.
-            if (this._ready) {
-                return new Error("Can't call config() after localforage " + 'has been used.');
-            }
-
-            for (var i in options) {
-                if (i === 'storeName') {
-                    options[i] = options[i].replace(/\W/g, '_');
+                function n(t) {
+                    r || (r = !0, a.reject(e, t))
                 }
 
-                if (i === 'version' && typeof options[i] !== 'number') {
-                    return new Error('Database version must be a number.');
+                function o(t) {
+                    r || (r = !0, a.resolve(e, t))
                 }
-
-                this._config[i] = options[i];
+                var i = p(function() {
+                    t(o, n)
+                });
+                "error" === i.status && n(i.value)
             }
 
-            // after all config options are set and
-            // the driver option is used, try setting it
-            if ('driver' in options && options.driver) {
-                return this.setDriver(this._config.driver);
-            }
-
-            return true;
-        } else if (typeof options === 'string') {
-            return this._config[options];
-        } else {
-            return this._config;
-        }
-    };
-
-    // Used to define a custom driver, shared across all instances of
-    // localForage.
-
-
-    LocalForage.prototype.defineDriver = function defineDriver(driverObject, callback, errorCallback) {
-        var promise = new Promise$1(function (resolve, reject) {
-            try {
-                var driverName = driverObject._driver;
-                var complianceError = new Error('Custom driver not compliant; see ' + 'https://mozilla.github.io/localForage/#definedriver');
-
-                // A driver name should be defined and not overlap with the
-                // library-defined, default drivers.
-                if (!driverObject._driver) {
-                    reject(complianceError);
-                    return;
-                }
-
-                var driverMethods = LibraryMethods.concat('_initStorage');
-                for (var i = 0, len = driverMethods.length; i < len; i++) {
-                    var driverMethodName = driverMethods[i];
-
-                    // when the property is there,
-                    // it should be a method even when optional
-                    var isRequired = !includes(OptionalDriverMethods, driverMethodName);
-                    if ((isRequired || driverObject[driverMethodName]) && typeof driverObject[driverMethodName] !== 'function') {
-                        reject(complianceError);
-                        return;
-                    }
-                }
-
-                var configureMissingMethods = function configureMissingMethods() {
-                    var methodNotImplementedFactory = function methodNotImplementedFactory(methodName) {
-                        return function () {
-                            var error = new Error('Method ' + methodName + ' is not implemented by the current driver');
-                            var promise = Promise$1.reject(error);
-                            executeCallback(promise, arguments[arguments.length - 1]);
-                            return promise;
-                        };
-                    };
-
-                    for (var _i = 0, _len = OptionalDriverMethods.length; _i < _len; _i++) {
-                        var optionalDriverMethod = OptionalDriverMethods[_i];
-                        if (!driverObject[optionalDriverMethod]) {
-                            driverObject[optionalDriverMethod] = methodNotImplementedFactory(optionalDriverMethod);
-                        }
-                    }
-                };
-
-                configureMissingMethods();
-
-                var setDriverSupport = function setDriverSupport(support) {
-                    if (DefinedDrivers[driverName]) {
-                        console.info('Redefining LocalForage driver: ' + driverName);
-                    }
-                    DefinedDrivers[driverName] = driverObject;
-                    DriverSupport[driverName] = support;
-                    // don't use a then, so that we can define
-                    // drivers that have simple _support methods
-                    // in a blocking manner
-                    resolve();
-                };
-
-                if ('_support' in driverObject) {
-                    if (driverObject._support && typeof driverObject._support === 'function') {
-                        driverObject._support().then(setDriverSupport, reject);
-                    } else {
-                        setDriverSupport(!!driverObject._support);
-                    }
-                } else {
-                    setDriverSupport(true);
-                }
-            } catch (e) {
-                reject(e);
-            }
-        });
-
-        executeTwoCallbacks(promise, callback, errorCallback);
-        return promise;
-    };
-
-    LocalForage.prototype.driver = function driver() {
-        return this._driver || null;
-    };
-
-    LocalForage.prototype.getDriver = function getDriver(driverName, callback, errorCallback) {
-        var getDriverPromise = DefinedDrivers[driverName] ? Promise$1.resolve(DefinedDrivers[driverName]) : Promise$1.reject(new Error('Driver not found.'));
-
-        executeTwoCallbacks(getDriverPromise, callback, errorCallback);
-        return getDriverPromise;
-    };
-
-    LocalForage.prototype.getSerializer = function getSerializer(callback) {
-        var serializerPromise = Promise$1.resolve(localforageSerializer);
-        executeTwoCallbacks(serializerPromise, callback);
-        return serializerPromise;
-    };
-
-    LocalForage.prototype.ready = function ready(callback) {
-        var self = this;
-
-        var promise = self._driverSet.then(function () {
-            if (self._ready === null) {
-                self._ready = self._initDriver();
-            }
-
-            return self._ready;
-        });
-
-        executeTwoCallbacks(promise, callback, callback);
-        return promise;
-    };
-
-    LocalForage.prototype.setDriver = function setDriver(drivers, callback, errorCallback) {
-        var self = this;
-
-        if (!isArray(drivers)) {
-            drivers = [drivers];
-        }
-
-        var supportedDrivers = this._getSupportedDrivers(drivers);
-
-        function setDriverToConfig() {
-            self._config.driver = self.driver();
-        }
-
-        function extendSelfWithDriver(driver) {
-            self._extend(driver);
-            setDriverToConfig();
-
-            self._ready = self._initStorage(self._config);
-            return self._ready;
-        }
-
-        function initDriver(supportedDrivers) {
-            return function () {
-                var currentDriverIndex = 0;
-
-                function driverPromiseLoop() {
-                    while (currentDriverIndex < supportedDrivers.length) {
-                        var driverName = supportedDrivers[currentDriverIndex];
-                        currentDriverIndex++;
-
-                        self._dbInfo = null;
-                        self._ready = null;
-
-                        return self.getDriver(driverName).then(extendSelfWithDriver)["catch"](driverPromiseLoop);
-                    }
-
-                    setDriverToConfig();
-                    var error = new Error('No available storage method found.');
-                    self._driverSet = Promise$1.reject(error);
-                    return self._driverSet;
-                }
-
-                return driverPromiseLoop();
-            };
-        }
-
-        // There might be a driver initialization in progress
-        // so wait for it to finish in order to avoid a possible
-        // race condition to set _dbInfo
-        var oldDriverSetDone = this._driverSet !== null ? this._driverSet["catch"](function () {
-            return Promise$1.resolve();
-        }) : Promise$1.resolve();
-
-        this._driverSet = oldDriverSetDone.then(function () {
-            var driverName = supportedDrivers[0];
-            self._dbInfo = null;
-            self._ready = null;
-
-            return self.getDriver(driverName).then(function (driver) {
-                self._driver = driver._driver;
-                setDriverToConfig();
-                self._wrapLibraryMethodsWithReady();
-                self._initDriver = initDriver(supportedDrivers);
-            });
-        })["catch"](function () {
-            setDriverToConfig();
-            var error = new Error('No available storage method found.');
-            self._driverSet = Promise$1.reject(error);
-            return self._driverSet;
-        });
-
-        executeTwoCallbacks(this._driverSet, callback, errorCallback);
-        return this._driverSet;
-    };
-
-    LocalForage.prototype.supports = function supports(driverName) {
-        return !!DriverSupport[driverName];
-    };
-
-    LocalForage.prototype._extend = function _extend(libraryMethodsAndProperties) {
-        extend(this, libraryMethodsAndProperties);
-    };
-
-    LocalForage.prototype._getSupportedDrivers = function _getSupportedDrivers(drivers) {
-        var supportedDrivers = [];
-        for (var i = 0, len = drivers.length; i < len; i++) {
-            var driverName = drivers[i];
-            if (this.supports(driverName)) {
-                supportedDrivers.push(driverName);
-            }
-        }
-        return supportedDrivers;
-    };
-
-    LocalForage.prototype._wrapLibraryMethodsWithReady = function _wrapLibraryMethodsWithReady() {
-        // Add a stub for each driver API method that delays the call to the
-        // corresponding driver method until localForage is ready. These stubs
-        // will be replaced by the driver methods as soon as the driver is
-        // loaded, so there is no performance impact.
-        for (var i = 0, len = LibraryMethods.length; i < len; i++) {
-            callWhenReady(this, LibraryMethods[i]);
-        }
-    };
-
-    LocalForage.prototype.createInstance = function createInstance(options) {
-        return new LocalForage(options);
-    };
-
-    return LocalForage;
-}();
-
-// The actual localForage object that we expose as a module or via a
-// global. It's extended by pulling in one of our other libraries.
-
-
-var localforage_js = new LocalForage();
-
-module.exports = localforage_js;
-
-},{"3":3}]},{},[4])(4)
-});
-
-      var player = document.querySelector("desmond-player");
-      if (player) {
-      var shadow = player.attachShadow({mode: "open"});
-      shadow.innerHTML=`<div id="player">
-        <canvas id="top" width="256" height="192"></canvas>
-        <canvas id="bottom" width="256" height="192"></canvas>`;
-              var getFileBlob=function(e,t){var n=new XMLHttpRequest;n.open('GET',e),n.responseType='blob',n.addEventListener('load',function(){t(n.response)}),n.send()},blobToFile=function(e,t){return e.lastModifiedDate=new Date,e.name=t,e},getFileObject=function(e,t){getFileBlob(e,function(e){t(blobToFile(e,'test.jpg'))})};function loadURL(e, a){getFileObject(e,function(e){console.log(e),tryLoadROM(e),status();a()})}; 
-       player.loadURL = function(u, cb) { 
-         player.enableMicrophone = function() {
-    var micPtr = Module._realloc(0, 0x1000)
-    var micBuf = Module.HEAPU8.subarray(micPtr, micPtr + 0x1000)
-    console.log(micPtr, micBuf)
-    navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-        .then(function (stream) {
-            var audioCtx = new AudioContext();
-            var source = audioCtx.createMediaStreamSource(stream);
-            var scriptNode = audioCtx.createScriptProcessor(2048, 1, 1);
-            source.connect(scriptNode);
-            scriptNode.onaudioprocess = function (e) {
-                var buf = e.inputBuffer.getChannelData(0)
-                var dstPtr = 0;
-                for (var i = 0; i <= 2045; i+=3) {
-                    var val = Math.floor(((buf[i] + buf[i + 1] + buf[i + 2]) / 3 + 1) * 64)
-                    if (val > 127) {
-                        val = 127
-                    } else if (val < 0) {
-                        val = 0
-                    }
-                    micBuf[dstPtr++] = val
-                }
-                Module._micWriteSamples(micPtr, 682)
-                for (var outputChan = 0; outputChan < 1; outputChan++) {
-                    var buf = e.outputBuffer.getChannelData(outputChan)
-                    for (var i = 0; i < 2048; i++) {
-                        buf[i] = 0
-                    }
-                }
-            }
-            scriptNode.connect(audioCtx.destination);
-           
-        });
-}
-
-
-         if (cb) {
-         loadURL(u, cb);
-         } else {
-           loadURL(u);
-       };
-    }
-        
-function status(){
-console.log("loaded");
-};
-        var plugins = {}
-        var config = {
-            swapTopBottom: false,
-            swapTopBottomL: false,
-            powerSave: true,
-            micWhenR: true,
-            vkEnabled: true,
-        }
-
-        function loadConfig() {
-            var cfg = JSON.parse(window.localStorage['config'] || '{}')
-            for (var k in cfg) {
-                config[k] = cfg[k]
-            }
-        }
-        loadConfig()
-
-        function uiSaveConfig() {
-            window.localStorage['config'] = JSON.stringify(config)
-        }
-
-        
-        function uiMenuBack() {
-            uiSaveConfig()
-            if (emuIsGameLoaded) {
-                uiSwitchTo('player')
-            } else {
-                uiSwitchTo('welcome')
-            }
-        }
-
-        function uiSaveBackup() {
-            localforage.getItem('sav-' + gameID).then((data) => {
-                var blob = new Blob([data], { type: "application/binary" });
-                var link = document.createElement("a");
-                link.href = window.URL.createObjectURL(blob);
-                link.download = 'sav-' + gameID + '.dsv';
-                link.click();
-            })
-        }
-
-        async function uiSaveRestore() {
-            var file = $id('restore-file').files[0]
-            if (!file) {
-                return
-            }
-            if (file.size > 2.2 * 1024 * 1024) {
-                alert('Too large! It should not be a save file.')
-                return
-            }
-            var u8 = new Uint8Array(await file.arrayBuffer())
-            localforage.setItem('sav-' + gameID, u8).then(() => {
-                alert('Save file loaded.')
-                location.reload()
-            })
-        }
-
-
-  
-
-        function $id(id) {
-            return document.getElementById(id);
-        }
-
-        var isIOS = !!navigator.platform && /iPad|iPhone|iPod/.test(navigator.platform);
-        var isWebApp = navigator.standalone || false
-        var isSaveSupported = true
-        var isSaveNagAppeared = false
-        if (isIOS) {
-            //document.getElementById('romFile').files = null;
-            if (!isWebApp) {
-                // On iOS Safari, the indexedDB will be cleared after 7 days. 
-                // To prevent users from frustration, we don't allow savegame on iOS unless the we are in the PWA mode.
-                isSaveSupported = false
-                var divIosHint = $id('ios-hint')
-                divIosHint.hidden = false
-                divIosHint.style = 'position: absolute; bottom: ' + divIosHint.clientHeight + 'px;'
-            }
-        }
-
-        var emuKeyState = new Array(14)
-        const emuKeyNames = ["right", "left", "down", "up", "select", "start", "b", "a", "y", "x", "l", "r", "debug", "lid"]
-        var vkMap = {}
-        var vkState = {}
-        var keyNameToKeyId = {}
-        var vkStickPos
-        for (var i = 0; i < emuKeyNames.length; i++) {
-            keyNameToKeyId[emuKeyNames[i]] = i
-        }
-        var isLandscape = false
-
-        const emuKeyboradMapping = [39, 37, 40, 38, 16, 13, 90, 88, 65, 83, 81, 87, -1, 8]
-        var emuGameID = 'unknown'
-        var emuIsRunning = false
-        var emuIsGameLoaded = false
-
-        var fileInput = $id('rom')
-        var romSize = 0
-
-        var FB = [0, 0]
-        var screenCanvas = [shadow.getElementById('top'), shadow.getElementById('bottom')]
-        var ctx2d = screenCanvas.map((v) => { return v.getContext('2d', { alpha: false }) })
-
-        var audioContext
-        var audioBuffer
-        var tmpAudioBuffer = new Int16Array(16384 * 2)
-        var audioWorkletNode
-
-        var frameCount = 0
-        var touched = 0
-        var touchX = 0
-        var touchY = 0
-        var prevSaveFlag = 0
-        var lastTwoFrameTime = 10
-        var fbSize
-
-
-        function callPlugin(type, arg) {
-            for (var k in plugins) {
-                if (plugins[k].handler) {
-                    plugins[k].handler(type, arg)
-                }
-            }
-        }
-
-        function showMsg(msg) {
-            document.getElementById('msg-text').innerText = msg
-            document.getElementById('msg-layer').hidden = false
-            setTimeout(function () {
-                document.getElementById('msg-layer').hidden = true
-            }, 1000)
-        }
-
-        function emuRunFrame() {
-            processGamepadInput()
-            var keyMask = 0;
-            for (var i = 0; i < 14; i++) {
-                if (emuKeyState[i]) {
-                    keyMask |= 1 << i
-                }
-            }
-            var mic = emuKeyState[11]
-            if (mic) {
-                console.log('mic')
-                keyMask |= 1 << 14
-            }
-
-
-            if (config.powerSave) {
-                Module._runFrame(0, keyMask, touched, touchX, touchY)
-            }
-            Module._runFrame(1, keyMask, touched, touchX, touchY)
-
-            ctx2d[0].putImageData(FB[0], 0, 0)
-            ctx2d[1].putImageData(FB[1], 0, 0)
-            if (audioWorkletNode) {
+            function p(e, t) {
+                var r = {};
                 try {
-                    var samplesRead = Module._fillAudioBuffer(4096)
-                    tmpAudioBuffer.set(audioBuffer.subarray(0, samplesRead * 2))
-                    audioWorkletNode.port.postMessage(tmpAudioBuffer.subarray(0, samplesRead * 2))
-                } catch (error) {
-                    // tmpAudioBuffer may be detached if previous message is still processing 
-                    console.log(error)
+                    r.value = e(t), r.status = "success"
+                } catch (e) {
+                    r.status = "error", r.value = e
                 }
+                return r
             }
-
-            frameCount += 1
-    
-        }
-
-        function wasmReady() {
-            Module._setSampleRate(47860)
-        }
-
-
-        function checkSaveGame() {
-            var saveUpdateFlag = Module._savUpdateChangeFlag()
-            if ((saveUpdateFlag == 0) && (prevSaveFlag == 1)) {
-                var size = Module._savGetSize()
-                if ((size > 0) && (isSaveSupported)) {
-                    var ptr = Module._savGetPointer(0)
-                    var tmpSaveBuf = new Uint8Array(size)
-                    tmpSaveBuf.set(Module.HEAPU8.subarray(ptr, ptr + size))
-                    localforage.setItem('sav-' + gameID, tmpSaveBuf)
-                    showMsg('Auto saving...')
+            t.exports = l, l.prototype.catch = function(e) {
+                return this.then(null, e)
+            }, l.prototype.then = function(e, t) {
+                if ("function" != typeof e && this.state === u || "function" != typeof t && this.state === i) return this;
+                var r = new this.constructor(o);
+                this.state !== s ? d(r, this.state === u ? e : t, this.outcome) : this.queue.push(new c(r, e, t));
+                return r
+            }, c.prototype.callFulfilled = function(e) {
+                a.resolve(this.promise, e)
+            }, c.prototype.otherCallFulfilled = function(e) {
+                d(this.promise, this.onFulfilled, e)
+            }, c.prototype.callRejected = function(e) {
+                a.reject(this.promise, e)
+            }, c.prototype.otherCallRejected = function(e) {
+                d(this.promise, this.onRejected, e)
+            }, a.resolve = function(e, t) {
+                var r = p(f, t);
+                if ("error" === r.status) return a.reject(e, r.value);
+                var n = r.value;
+                if (n) m(e, n);
+                else {
+                    e.state = u, e.outcome = t;
+                    for (var o = -1, i = e.queue.length; ++o < i;) e.queue[o].callFulfilled(t)
                 }
-            }
-            prevSaveFlag = saveUpdateFlag
-        }
+                return e
+            }, a.reject = function(e, t) {
+                e.state = i, e.outcome = t;
+                for (var r = -1, n = e.queue.length; ++r < n;) e.queue[r].callRejected(t);
+                return e
+            }, l.resolve = function(e) {
+                if (e instanceof this) return e;
+                return a.resolve(new this(o), e)
+            }, l.reject = function(e) {
+                var t = new this(o);
+                return a.reject(t, e)
+            }, l.all = function(e) {
+                var t = this;
+                if ("[object Array]" !== Object.prototype.toString.call(e)) return this.reject(new TypeError("must be an array"));
+                var r = e.length,
+                    n = !1;
+                if (!r) return this.resolve([]);
+                var i = new Array(r),
+                    u = 0,
+                    s = -1,
+                    l = new this(o);
+                for (; ++s < r;) c(e[s], s);
+                return l;
 
-        async function tryLoadROM(file) {
-            if (!file) {
-                return
-            }
-            if (file.size < 1024) {
-                return
-            }
-            var header = new Uint8Array(await (file.slice(0, 1024)).arrayBuffer())
-            gameID = ''
-            for (var i = 0; i < 0x10; i++) {
-                gameID += (header[i] == 0) ? ' ' : String.fromCharCode(header[i])
-            }
-            if (gameID[0xC] == '#') {
-                // a homebrew!
-                gameID = file.name
-            }
-            console.log('gameID', gameID)
-            romSize = file.size
-            var romBufPtr = Module._prepareRomBuffer(romSize)
-            console.log(romSize, romBufPtr)
-            Module.HEAPU8.set(new Uint8Array(await file.arrayBuffer()), romBufPtr);
-            var saveData = await localforage.getItem('sav-' + gameID)
-            if (saveData) {
-                Module.HEAPU8.set(saveData, Module._savGetPointer(saveData.length))
-            }
-            Module._savUpdateChangeFlag()
-            var ret = Module._loadROM(romSize);
-            if (ret != 1) {
-                alert('LoadROM failed.')
-                return;
-            }
-
-
-            ptrFrontBuffer = Module._getSymbol(5)
-            var fb = Module._getSymbol(4)
-            for (var i = 0; i < 2; i++) {
-                FB[i] = new ImageData(new Uint8ClampedArray(Module.HEAPU8.buffer).subarray(fb + 256 * 192 * 4 * i, fb + 256 * 192 * 4 * (i + 1)), 256, 192)
-            }
-            var ptrAudio = Module._getSymbol(6)
-            audioBuffer = new Int16Array(Module.HEAPU8.buffer).subarray(ptrAudio / 2, ptrAudio / 2 + 16384 * 2)
-            console.log('Start!!!')
-            emuIsGameLoaded = true
-            emuIsRunning = true
-shadow.querySelector("#player").hidden = false;
-                  callPlugin('loaded', gameID)
-        }
-
-       
-
-
-        // must be called in user gesture
-        function tryInitSound() {
-            try {
-                if (audioContext) {
-                    if (audioContext.state != 'running') {
-                        audioContext.resume()
-                    }
-                    return;
-                }
-                audioContext = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 0.0001, sampleRate: 48000 });
-                if (!audioContext.audioWorklet) {
-                    alert('AudioWorklet is not supported in your browser...')
-                } else {
-                    audioContext.audioWorklet.addModule(URL.createObjectURL(new Blob([`class MyAudioWorklet extends AudioWorkletProcessor {
-    constructor() {
-        super()
-        this.FIFO_CAP = 5000
-        this.fifo0 = new Int16Array(this.FIFO_CAP)
-        this.fifo1 = new Int16Array(this.FIFO_CAP)
-        this.fifoHead = 0
-        this.fifoLen = 0
-        this.port.onmessage = (e) => {
-            //console.log(this.fifoLen)
-            var buf = e.data
-            var samplesReceived = buf.length / 2
-            if (this.fifoLen + samplesReceived >= this.FIFO_CAP) {
-                console.log('o')
-                return
-            }
-
-            for (var i = 0; i < buf.length; i+=2) {
-                this.fifoEnqueue(buf[i], buf[i+1])
-            }
-        }
-    }
-
-    fifoDequeue() {
-        this.fifoHead += 1
-        this.fifoHead %= this.FIFO_CAP
-        this.fifoLen -= 1
-    }
-
-    fifoEnqueue(a, b) {
-        const pos = (this.fifoHead + this.fifoLen) % this.FIFO_CAP
-        this.fifo0[pos] = a
-        this.fifo1[pos] = b
-        this.fifoLen += 1
-    }
-
-    process(inputs, outputs, parameters) {
-        const output = outputs[0]
-        const chan0 = output[0]
-        const chan1 = output[1]
-
-        for (var i = 0; i < chan0.length; i++) {
-            if (this.fifoLen < 1) {
-                console.log("u")
-                break
-            }
-            chan0[i] = this.fifo0[this.fifoHead] / 32768.0
-            chan1[i] = this.fifo1[this.fifoHead] / 32768.0
-            this.fifoDequeue()
-        }
-        return true
-    }
-}
-
-registerProcessor('my-worklet', MyAudioWorklet)`], {type: "text/javascript"}))).then(() => {
-                        audioWorkletNode = new AudioWorkletNode(audioContext, "my-worklet", { outputChannelCount: [2] })
-                        audioWorkletNode.connect(audioContext.destination)
+                function c(e, o) {
+                    t.resolve(e).then(function(e) {
+                        i[o] = e, ++u !== r || n || (n = !0, a.resolve(l, i))
+                    }, function(e) {
+                        n || (n = !0, a.reject(l, e))
                     })
                 }
-
-                audioContext.resume()
-            } catch (e) {
-                console.log(e)
-                //alert('Cannnot init sound ')
+            }, l.race = function(e) {
+                var t = this;
+                if ("[object Array]" !== Object.prototype.toString.call(e)) return this.reject(new TypeError("must be an array"));
+                var r = e.length,
+                    n = !1;
+                if (!r) return this.resolve([]);
+                var i = -1,
+                    u = new this(o);
+                for (; ++i < r;) s = e[i], t.resolve(s).then(function(e) {
+                    n || (n = !0, a.resolve(u, e))
+                }, function(e) {
+                    n || (n = !0, a.reject(u, e))
+                });
+                var s;
+                return u
             }
-        }
-
-        var prevRunFrameTime = performance.now()
-        function emuLoop() {
-            window.requestAnimationFrame(emuLoop)
-
-            if (emuIsRunning) {
-                if (config.powerSave) {
-                    if (performance.now() - prevRunFrameTime < 32) {
-                        return
-                    }
+        }, {
+            1: 1
+        }],
+        3: [function(e, t, r) {
+            (function(t) {
+                "use strict";
+                "function" != typeof t.Promise && (t.Promise = e(2))
+            }).call(this, "undefined" != typeof global ? global : "undefined" != typeof self ? self : "undefined" != typeof window ? window : {})
+        }, {
+            2: 2
+        }],
+        4: [function(e, t, r) {
+            "use strict";
+            var n = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function(e) {
+                return typeof e
+            } : function(e) {
+                return e && "function" == typeof Symbol && e.constructor === Symbol && e !== Symbol.prototype ? "symbol" : typeof e
+            };
+            var o = function() {
+                try {
+                    if ("undefined" != typeof indexedDB) return indexedDB;
+                    if ("undefined" != typeof webkitIndexedDB) return webkitIndexedDB;
+                    if ("undefined" != typeof mozIndexedDB) return mozIndexedDB;
+                    if ("undefined" != typeof OIndexedDB) return OIndexedDB;
+                    if ("undefined" != typeof msIndexedDB) return msIndexedDB
+                } catch (e) {
+                    return
                 }
-                prevRunFrameTime = performance.now()
-                emuRunFrame()
-            }
-        }
-        emuLoop()
+            }();
 
-        var stickTouchID = null
-        var tpadTouchID = null
-
-        function isPointInRect(x, y, r) {
-            if ((x >= r.x) && (x < r.x + r.width)) {
-                if ((y >= r.y) && (y < r.y + r.height)) {
-                    return true
-                }
-            }
-            return false
-        }
-
-        function clamp01(a) {
-            if (a < 0) {
-                return 0
-            }
-            if (a > 1) {
-                return 1
-            }
-            return a
-        }
-
-        function handleTouch(event) {
-            tryInitSound()
-            if (!emuIsRunning) {
-                return
-            }
-            event.preventDefault();
-            event.stopPropagation();
-
-            var isDown = false
-            var x = 0
-            var y = 0
-
-            var needUpdateStick = false
-            var stickY = vkStickPos[0]
-            var stickX = vkStickPos[1]
-            var stickW = vkStickPos[2]
-            var stickH = vkStickPos[3]
-
-            var stickPressed = false
-            var stickDeadZone = stickW * 0.4
-
-            var nextStickTouchID = null
-            var nextTpadTouchID = null
-
-            var tsRect = screenCanvas[1].getBoundingClientRect()
-
-            for (var i = 0; i < emuKeyState.length; i++) {
-                emuKeyState[i] = false
-            }
-            for (var k in vkState) {
-                vkState[k][1] = 0
-            }
-
-            for (var i = 0; i < event.touches.length; i++) {
-                var t = event.touches[i];
-                var tid = t.identifier
-                var dom = document.elementFromPoint(t.clientX, t.clientY)
-                var k = dom ? dom.getAttribute('data-k') : null
-
-                if ((tid === stickTouchID) || ((dom == vkMap['stick']) && (tid != tpadTouchID))) {
-                    stickPressed = true
-
-                    vkState['stick'][1] = 1
-                    var sx = t.clientX
-                    var sy = t.clientY
-                    if (sx < stickX - stickDeadZone) {
-                        emuKeyState[1] = true
-                    }
-                    if (sx > stickX + stickDeadZone) {
-                        emuKeyState[0] = true
-                    }
-                    if (sy < stickY - stickDeadZone) {
-                        emuKeyState[3] = true
-                    }
-                    if (sy > stickY + stickDeadZone) {
-                        emuKeyState[2] = true
-                    }
-                    sx = Math.max(stickX - stickW / 2, sx)
-                    sx = Math.min(stickX + stickW / 2, sx)
-                    sy = Math.max(stickY - stickH / 2, sy)
-                    sy = Math.min(stickY + stickH / 2, sy)
-                    stickX = sx
-                    stickY = sy
-                    needUpdateStick = true
-                    nextStickTouchID = tid
-                    continue
-                }
-                if ((tid === tpadTouchID) || (isPointInRect(t.clientX, t.clientY, tsRect) && (!k))) {
-                    isDown = true
-                    x = clamp01((t.clientX - tsRect.x) / tsRect.width) * 256
-                    y = clamp01((t.clientY - tsRect.y) / tsRect.height) * 192
-                    nextTpadTouchID = tid
-                    continue
-                }
-                if (k) {
-
-                    vkState[k][1] = 1
-                    continue
+            function a(e, t) {
+                e = e || [], t = t || {};
+                try {
+                    return new Blob(e, t)
+                } catch (o) {
+                    if ("TypeError" !== o.name) throw o;
+                    for (var r = new("undefined" != typeof BlobBuilder ? BlobBuilder : "undefined" != typeof MSBlobBuilder ? MSBlobBuilder : "undefined" != typeof MozBlobBuilder ? MozBlobBuilder : WebKitBlobBuilder), n = 0; n < e.length; n += 1) r.append(e[n]);
+                    return r.getBlob(t.type)
                 }
             }
+            "undefined" == typeof Promise && e(3);
+            var i = Promise;
 
-            touched = isDown ? 1 : 0;
-            touchX = x
-            touchY = y
+            function u(e, t) {
+                t && e.then(function(e) {
+                    t(null, e)
+                }, function(e) {
+                    t(e)
+                })
+            }
 
-            for (var k in vkState) {
-                if (vkState[k][0] != vkState[k][1]) {
-                    var dom = vkMap[k]
-                    vkState[k][0] = vkState[k][1]
-                    if (vkState[k][1]) {
-                        dom.classList.add('vk-touched')
-                        if (k == 'menu') {
-                            uiSwitchTo('menu')
+            function s(e, t, r) {
+                "function" == typeof t && e.then(t), "function" == typeof r && e.catch(r)
+            }
+
+            function l(e) {
+                return "string" != typeof e && (console.warn(e + " used as a key, but it is not a string."), e = String(e)), e
+            }
+
+            function c() {
+                if (arguments.length && "function" == typeof arguments[arguments.length - 1]) return arguments[arguments.length - 1]
+            }
+            var d = "local-forage-detect-blob-support",
+                f = void 0,
+                m = {},
+                p = Object.prototype.toString,
+                h = "readonly",
+                _ = "readwrite";
+
+            function v(e) {
+                return "boolean" == typeof f ? i.resolve(f) : function(e) {
+                    return new i(function(t) {
+                        var r = e.transaction(d, _),
+                            n = a([""]);
+                        r.objectStore(d).put(n, "key"), r.onabort = function(e) {
+                            e.preventDefault(), e.stopPropagation(), t(!1)
+                        }, r.oncomplete = function() {
+                            var e = navigator.userAgent.match(/Chrome\/(\d+)/),
+                                r = navigator.userAgent.match(/Edge\//);
+                            t(r || !e || parseInt(e[1], 10) >= 43)
                         }
-                    } else {
-                        dom.classList.remove('vk-touched')
-                        if (k == "stick") {
-                            needUpdateStick = true
+                    }).catch(function() {
+                        return !1
+                    })
+                }(e).then(function(e) {
+                    return f = e
+                })
+            }
+
+            function S(e) {
+                var t = m[e.name],
+                    r = {};
+                r.promise = new i(function(e, t) {
+                    r.resolve = e, r.reject = t
+                }), t.deferredOperations.push(r), t.dbReady ? t.dbReady = t.dbReady.then(function() {
+                    return r.promise
+                }) : t.dbReady = r.promise
+            }
+
+            function y(e) {
+                var t = m[e.name].deferredOperations.pop();
+                if (t) return t.resolve(), t.promise
+            }
+
+            function g(e, t) {
+                var r = m[e.name].deferredOperations.pop();
+                if (r) return r.reject(t), r.promise
+            }
+
+            function w(e, t) {
+                return new i(function(r, n) {
+                    if (m[e.name] = m[e.name] || {
+                            forages: [],
+                            db: null,
+                            dbReady: null,
+                            deferredOperations: []
+                        }, e.db) {
+                        if (!t) return r(e.db);
+                        S(e), e.db.close()
+                    }
+                    var a = [e.name];
+                    t && a.push(e.version);
+                    var i = o.open.apply(o, a);
+                    t && (i.onupgradeneeded = function(t) {
+                        var r = i.result;
+                        try {
+                            r.createObjectStore(e.storeName), t.oldVersion <= 1 && r.createObjectStore(d)
+                        } catch (r) {
+                            if ("ConstraintError" !== r.name) throw r;
+                            console.warn('The database "' + e.name + '" has been upgraded from version ' + t.oldVersion + " to version " + t.newVersion + ', but the storage "' + e.storeName + '" already exists.')
                         }
+                    }), i.onerror = function(e) {
+                        e.preventDefault(), n(i.error)
+                    }, i.onsuccess = function() {
+                        r(i.result), y(e)
                     }
+                })
+            }
 
+            function F(e) {
+                return w(e, !1)
+            }
+
+            function E(e) {
+                return w(e, !0)
+            }
+
+            function M(e, t) {
+                if (!e.db) return !0;
+                var r = !e.db.objectStoreNames.contains(e.storeName),
+                    n = e.version < e.db.version,
+                    o = e.version > e.db.version;
+                if (n && (e.version !== t && console.warn('The database "' + e.name + "\" can't be downgraded from version " + e.db.version + " to version " + e.version + "."), e.version = e.db.version), o || r) {
+                    if (r) {
+                        var a = e.db.version + 1;
+                        a > e.version && (e.version = a)
+                    }
+                    return !0
+                }
+                return !1
+            }
+
+            function b(e) {
+                return a([function(e) {
+                    for (var t = e.length, r = new ArrayBuffer(t), n = new Uint8Array(r), o = 0; o < t; o++) n[o] = e.charCodeAt(o);
+                    return r
+                }(atob(e.data))], {
+                    type: e.type
+                })
+            }
+
+            function A(e) {
+                return e && e.__local_forage_encoded_blob
+            }
+
+            function T(e) {
+                var t = this,
+                    r = t._initReady().then(function() {
+                        var e = m[t._dbInfo.name];
+                        if (e && e.dbReady) return e.dbReady
+                    });
+                return s(r, e, e), r
+            }
+
+            function k(e, t, r, n) {
+                void 0 === n && (n = 1);
+                try {
+                    var o = e.db.transaction(e.storeName, t);
+                    r(null, o)
+                } catch (o) {
+                    if (n > 0 && (!e.db || "InvalidStateError" === o.name || "NotFoundError" === o.name)) return i.resolve().then(function() {
+                        if (!e.db || "NotFoundError" === o.name && !e.db.objectStoreNames.contains(e.storeName) && e.version <= e.db.version) return e.db && (e.version = e.db.version + 1), E(e)
+                    }).then(function() {
+                        return function(e) {
+                            S(e);
+                            for (var t = m[e.name], r = t.forages, n = 0; n < r.length; n++) {
+                                var o = r[n];
+                                o._dbInfo.db && (o._dbInfo.db.close(), o._dbInfo.db = null)
+                            }
+                            return e.db = null, F(e).then(function(t) {
+                                return e.db = t, M(e) ? E(e) : t
+                            }).then(function(n) {
+                                e.db = t.db = n;
+                                for (var o = 0; o < r.length; o++) r[o]._dbInfo.db = n
+                            }).catch(function(t) {
+                                throw g(e, t), t
+                            })
+                        }(e).then(function() {
+                            k(e, t, r, n - 1)
+                        })
+                    }).catch(r);
+                    r(o)
+                }
+            }
+            var D = {
+                _driver: "asyncStorage",
+                _initStorage: function(e) {
+                    var t = this,
+                        r = {
+                            db: null
+                        };
+                    if (e)
+                        for (var n in e) r[n] = e[n];
+                    var o = m[r.name];
+                    o || (o = {
+                        forages: [],
+                        db: null,
+                        dbReady: null,
+                        deferredOperations: []
+                    }, m[r.name] = o), o.forages.push(t), t._initReady || (t._initReady = t.ready, t.ready = T);
+                    var a = [];
+
+                    function u() {
+                        return i.resolve()
+                    }
+                    for (var s = 0; s < o.forages.length; s++) {
+                        var l = o.forages[s];
+                        l !== t && a.push(l._initReady().catch(u))
+                    }
+                    var c = o.forages.slice(0);
+                    return i.all(a).then(function() {
+                        return r.db = o.db, F(r)
+                    }).then(function(e) {
+                        return r.db = e, M(r, t._defaultConfig.version) ? E(r) : e
+                    }).then(function(e) {
+                        r.db = o.db = e, t._dbInfo = r;
+                        for (var n = 0; n < c.length; n++) {
+                            var a = c[n];
+                            a !== t && (a._dbInfo.db = r.db, a._dbInfo.version = r.version)
+                        }
+                    })
+                },
+                _support: function() {
+                    try {
+                        if (!o) return !1;
+                        var e = "undefined" != typeof openDatabase && /(Safari|iPhone|iPad|iPod)/.test(navigator.userAgent) && !/Chrome/.test(navigator.userAgent) && !/BlackBerry/.test(navigator.platform),
+                            t = "function" == typeof fetch && -1 !== fetch.toString().indexOf("[native code");
+                        return (!e || t) && "undefined" != typeof indexedDB && "undefined" != typeof IDBKeyRange
+                    } catch (e) {
+                        return !1
+                    }
+                }(),
+                iterate: function(e, t) {
+                    var r = this,
+                        n = new i(function(t, n) {
+                            r.ready().then(function() {
+                                k(r._dbInfo, h, function(o, a) {
+                                    if (o) return n(o);
+                                    try {
+                                        var i = a.objectStore(r._dbInfo.storeName).openCursor(),
+                                            u = 1;
+                                        i.onsuccess = function() {
+                                            var r = i.result;
+                                            if (r) {
+                                                var n = r.value;
+                                                A(n) && (n = b(n));
+                                                var o = e(n, r.key, u++);
+                                                void 0 !== o ? t(o) : r.continue()
+                                            } else t()
+                                        }, i.onerror = function() {
+                                            n(i.error)
+                                        }
+                                    } catch (e) {
+                                        n(e)
+                                    }
+                                })
+                            }).catch(n)
+                        });
+                    return u(n, t), n
+                },
+                getItem: function(e, t) {
+                    var r = this;
+                    e = l(e);
+                    var n = new i(function(t, n) {
+                        r.ready().then(function() {
+                            k(r._dbInfo, h, function(o, a) {
+                                if (o) return n(o);
+                                try {
+                                    var i = a.objectStore(r._dbInfo.storeName).get(e);
+                                    i.onsuccess = function() {
+                                        var e = i.result;
+                                        void 0 === e && (e = null), A(e) && (e = b(e)), t(e)
+                                    }, i.onerror = function() {
+                                        n(i.error)
+                                    }
+                                } catch (e) {
+                                    n(e)
+                                }
+                            })
+                        }).catch(n)
+                    });
+                    return u(n, t), n
+                },
+                setItem: function(e, t, r) {
+                    var n = this;
+                    e = l(e);
+                    var o = new i(function(r, o) {
+                        var a;
+                        n.ready().then(function() {
+                            return a = n._dbInfo, "[object Blob]" === p.call(t) ? v(a.db).then(function(e) {
+                                return e ? t : (r = t, new i(function(e, t) {
+                                    var n = new FileReader;
+                                    n.onerror = t, n.onloadend = function(t) {
+                                        var n = btoa(t.target.result || "");
+                                        e({
+                                            __local_forage_encoded_blob: !0,
+                                            data: n,
+                                            type: r.type
+                                        })
+                                    }, n.readAsBinaryString(r)
+                                }));
+                                var r
+                            }) : t
+                        }).then(function(t) {
+                            k(n._dbInfo, _, function(a, i) {
+                                if (a) return o(a);
+                                try {
+                                    var u = i.objectStore(n._dbInfo.storeName);
+                                    null === t && (t = void 0);
+                                    var s = u.put(t, e);
+                                    i.oncomplete = function() {
+                                        void 0 === t && (t = null), r(t)
+                                    }, i.onabort = i.onerror = function() {
+                                        var e = s.error ? s.error : s.transaction.error;
+                                        o(e)
+                                    }
+                                } catch (e) {
+                                    o(e)
+                                }
+                            })
+                        }).catch(o)
+                    });
+                    return u(o, r), o
+                },
+                removeItem: function(e, t) {
+                    var r = this;
+                    e = l(e);
+                    var n = new i(function(t, n) {
+                        r.ready().then(function() {
+                            k(r._dbInfo, _, function(o, a) {
+                                if (o) return n(o);
+                                try {
+                                    var i = a.objectStore(r._dbInfo.storeName).delete(e);
+                                    a.oncomplete = function() {
+                                        t()
+                                    }, a.onerror = function() {
+                                        n(i.error)
+                                    }, a.onabort = function() {
+                                        var e = i.error ? i.error : i.transaction.error;
+                                        n(e)
+                                    }
+                                } catch (e) {
+                                    n(e)
+                                }
+                            })
+                        }).catch(n)
+                    });
+                    return u(n, t), n
+                },
+                clear: function(e) {
+                    var t = this,
+                        r = new i(function(e, r) {
+                            t.ready().then(function() {
+                                k(t._dbInfo, _, function(n, o) {
+                                    if (n) return r(n);
+                                    try {
+                                        var a = o.objectStore(t._dbInfo.storeName).clear();
+                                        o.oncomplete = function() {
+                                            e()
+                                        }, o.onabort = o.onerror = function() {
+                                            var e = a.error ? a.error : a.transaction.error;
+                                            r(e)
+                                        }
+                                    } catch (e) {
+                                        r(e)
+                                    }
+                                })
+                            }).catch(r)
+                        });
+                    return u(r, e), r
+                },
+                length: function(e) {
+                    var t = this,
+                        r = new i(function(e, r) {
+                            t.ready().then(function() {
+                                k(t._dbInfo, h, function(n, o) {
+                                    if (n) return r(n);
+                                    try {
+                                        var a = o.objectStore(t._dbInfo.storeName).count();
+                                        a.onsuccess = function() {
+                                            e(a.result)
+                                        }, a.onerror = function() {
+                                            r(a.error)
+                                        }
+                                    } catch (e) {
+                                        r(e)
+                                    }
+                                })
+                            }).catch(r)
+                        });
+                    return u(r, e), r
+                },
+                key: function(e, t) {
+                    var r = this,
+                        n = new i(function(t, n) {
+                            e < 0 ? t(null) : r.ready().then(function() {
+                                k(r._dbInfo, h, function(o, a) {
+                                    if (o) return n(o);
+                                    try {
+                                        var i = a.objectStore(r._dbInfo.storeName),
+                                            u = !1,
+                                            s = i.openCursor();
+                                        s.onsuccess = function() {
+                                            var r = s.result;
+                                            r ? 0 === e ? t(r.key) : u ? t(r.key) : (u = !0, r.advance(e)) : t(null)
+                                        }, s.onerror = function() {
+                                            n(s.error)
+                                        }
+                                    } catch (e) {
+                                        n(e)
+                                    }
+                                })
+                            }).catch(n)
+                        });
+                    return u(n, t), n
+                },
+                keys: function(e) {
+                    var t = this,
+                        r = new i(function(e, r) {
+                            t.ready().then(function() {
+                                k(t._dbInfo, h, function(n, o) {
+                                    if (n) return r(n);
+                                    try {
+                                        var a = o.objectStore(t._dbInfo.storeName).openCursor(),
+                                            i = [];
+                                        a.onsuccess = function() {
+                                            var t = a.result;
+                                            t ? (i.push(t.key), t.continue()) : e(i)
+                                        }, a.onerror = function() {
+                                            r(a.error)
+                                        }
+                                    } catch (e) {
+                                        r(e)
+                                    }
+                                })
+                            }).catch(r)
+                        });
+                    return u(r, e), r
+                },
+                dropInstance: function(e, t) {
+                    t = c.apply(this, arguments);
+                    var r, n = this.config();
+                    if ((e = "function" != typeof e && e || {}).name || (e.name = e.name || n.name, e.storeName = e.storeName || n.storeName), e.name) {
+                        var a = e.name === n.name && this._dbInfo.db ? i.resolve(this._dbInfo.db) : F(e).then(function(t) {
+                            var r = m[e.name],
+                                n = r.forages;
+                            r.db = t;
+                            for (var o = 0; o < n.length; o++) n[o]._dbInfo.db = t;
+                            return t
+                        });
+                        r = e.storeName ? a.then(function(t) {
+                            if (t.objectStoreNames.contains(e.storeName)) {
+                                var r = t.version + 1;
+                                S(e);
+                                var n = m[e.name],
+                                    a = n.forages;
+                                t.close();
+                                for (var u = 0; u < a.length; u++) {
+                                    var s = a[u];
+                                    s._dbInfo.db = null, s._dbInfo.version = r
+                                }
+                                return new i(function(t, n) {
+                                    var a = o.open(e.name, r);
+                                    a.onerror = function(e) {
+                                        a.result.close(), n(e)
+                                    }, a.onupgradeneeded = function() {
+                                        a.result.deleteObjectStore(e.storeName)
+                                    }, a.onsuccess = function() {
+                                        var e = a.result;
+                                        e.close(), t(e)
+                                    }
+                                }).then(function(e) {
+                                    n.db = e;
+                                    for (var t = 0; t < a.length; t++) {
+                                        var r = a[t];
+                                        r._dbInfo.db = e, y(r._dbInfo)
+                                    }
+                                }).catch(function(t) {
+                                    throw (g(e, t) || i.resolve()).catch(function() {}), t
+                                })
+                            }
+                        }) : a.then(function(t) {
+                            S(e);
+                            var r = m[e.name],
+                                n = r.forages;
+                            t.close();
+                            for (var a = 0; a < n.length; a++) n[a]._dbInfo.db = null;
+                            return new i(function(t, r) {
+                                var n = o.deleteDatabase(e.name);
+                                n.onerror = n.onblocked = function(e) {
+                                    var t = n.result;
+                                    t && t.close(), r(e)
+                                }, n.onsuccess = function() {
+                                    var e = n.result;
+                                    e && e.close(), t(e)
+                                }
+                            }).then(function(e) {
+                                r.db = e;
+                                for (var t = 0; t < n.length; t++) y(n[t]._dbInfo)
+                            }).catch(function(t) {
+                                throw (g(e, t) || i.resolve()).catch(function() {}), t
+                            })
+                        })
+                    } else r = i.reject("Invalid arguments");
+                    return u(r, t), r
+                }
+            };
+            var P = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+                R = "~~local_forage_type~",
+                I = /^~~local_forage_type~([^~]+)~/,
+                N = "__lfsc__:",
+                H = N.length,
+                x = "arbf",
+                C = "blob",
+                O = "si08",
+                B = "ui08",
+                L = "uic8",
+                j = "si16",
+                U = "si32",
+                z = "ur16",
+                Y = "ui32",
+                W = "fl32",
+                q = "fl64",
+                G = H + x.length,
+                K = Object.prototype.toString;
+
+            function V(e) {
+                var t, r, n, o, a, i = .75 * e.length,
+                    u = e.length,
+                    s = 0;
+                "=" === e[e.length - 1] && (i--, "=" === e[e.length - 2] && i--);
+                var l = new ArrayBuffer(i),
+                    c = new Uint8Array(l);
+                for (t = 0; t < u; t += 4) r = P.indexOf(e[t]), n = P.indexOf(e[t + 1]), o = P.indexOf(e[t + 2]), a = P.indexOf(e[t + 3]), c[s++] = r << 2 | n >> 4, c[s++] = (15 & n) << 4 | o >> 2, c[s++] = (3 & o) << 6 | 63 & a;
+                return l
+            }
+
+            function X(e) {
+                var t, r = new Uint8Array(e),
+                    n = "";
+                for (t = 0; t < r.length; t += 3) n += P[r[t] >> 2], n += P[(3 & r[t]) << 4 | r[t + 1] >> 4], n += P[(15 & r[t + 1]) << 2 | r[t + 2] >> 6], n += P[63 & r[t + 2]];
+                return r.length % 3 == 2 ? n = n.substring(0, n.length - 1) + "=" : r.length % 3 == 1 && (n = n.substring(0, n.length - 2) + "=="), n
+            }
+            var J = {
+                serialize: function(e, t) {
+                    var r = "";
+                    if (e && (r = K.call(e)), e && ("[object ArrayBuffer]" === r || e.buffer && "[object ArrayBuffer]" === K.call(e.buffer))) {
+                        var n, o = N;
+                        e instanceof ArrayBuffer ? (n = e, o += x) : (n = e.buffer, "[object Int8Array]" === r ? o += O : "[object Uint8Array]" === r ? o += B : "[object Uint8ClampedArray]" === r ? o += L : "[object Int16Array]" === r ? o += j : "[object Uint16Array]" === r ? o += z : "[object Int32Array]" === r ? o += U : "[object Uint32Array]" === r ? o += Y : "[object Float32Array]" === r ? o += W : "[object Float64Array]" === r ? o += q : t(new Error("Failed to get type for BinaryArray"))), t(o + X(n))
+                    } else if ("[object Blob]" === r) {
+                        var a = new FileReader;
+                        a.onload = function() {
+                            var r = R + e.type + "~" + X(this.result);
+                            t(N + C + r)
+                        }, a.readAsArrayBuffer(e)
+                    } else try {
+                        t(JSON.stringify(e))
+                    } catch (r) {
+                        console.error("Couldn't convert value into a JSON string: ", e), t(null, r)
+                    }
+                },
+                deserialize: function(e) {
+                    if (e.substring(0, H) !== N) return JSON.parse(e);
+                    var t, r = e.substring(G),
+                        n = e.substring(H, G);
+                    if (n === C && I.test(r)) {
+                        var o = r.match(I);
+                        t = o[1], r = r.substring(o[0].length)
+                    }
+                    var i = V(r);
+                    switch (n) {
+                        case x:
+                            return i;
+                        case C:
+                            return a([i], {
+                                type: t
+                            });
+                        case O:
+                            return new Int8Array(i);
+                        case B:
+                            return new Uint8Array(i);
+                        case L:
+                            return new Uint8ClampedArray(i);
+                        case j:
+                            return new Int16Array(i);
+                        case z:
+                            return new Uint16Array(i);
+                        case U:
+                            return new Int32Array(i);
+                        case Y:
+                            return new Uint32Array(i);
+                        case W:
+                            return new Float32Array(i);
+                        case q:
+                            return new Float64Array(i);
+                        default:
+                            throw new Error("Unkown type: " + n)
+                    }
+                },
+                stringToBuffer: V,
+                bufferToString: X
+            };
+
+            function Q(e, t, r, n) {
+                e.executeSql("CREATE TABLE IF NOT EXISTS " + t.storeName + " (id INTEGER PRIMARY KEY, key unique, value)", [], r, n)
+            }
+
+            function $(e, t, r, n, o, a) {
+                e.executeSql(r, n, o, function(e, i) {
+                    i.code === i.SYNTAX_ERR ? e.executeSql("SELECT name FROM sqlite_master WHERE type='table' AND name = ?", [t.storeName], function(e, u) {
+                        u.rows.length ? a(e, i) : Q(e, t, function() {
+                            e.executeSql(r, n, o, a)
+                        }, a)
+                    }, a) : a(e, i)
+                }, a)
+            }
+            var Z = {
+                _driver: "webSQLStorage",
+                _initStorage: function(e) {
+                    var t = this,
+                        r = {
+                            db: null
+                        };
+                    if (e)
+                        for (var n in e) r[n] = "string" != typeof e[n] ? e[n].toString() : e[n];
+                    var o = new i(function(e, n) {
+                        try {
+                            r.db = openDatabase(r.name, String(r.version), r.description, r.size)
+                        } catch (e) {
+                            return n(e)
+                        }
+                        r.db.transaction(function(o) {
+                            Q(o, r, function() {
+                                t._dbInfo = r, e()
+                            }, function(e, t) {
+                                n(t)
+                            })
+                        }, n)
+                    });
+                    return r.serializer = J, o
+                },
+                _support: "function" == typeof openDatabase,
+                iterate: function(e, t) {
+                    var r = this,
+                        n = new i(function(t, n) {
+                            r.ready().then(function() {
+                                var o = r._dbInfo;
+                                o.db.transaction(function(r) {
+                                    $(r, o, "SELECT * FROM " + o.storeName, [], function(r, n) {
+                                        for (var a = n.rows, i = a.length, u = 0; u < i; u++) {
+                                            var s = a.item(u),
+                                                l = s.value;
+                                            if (l && (l = o.serializer.deserialize(l)), void 0 !== (l = e(l, s.key, u + 1))) return void t(l)
+                                        }
+                                        t()
+                                    }, function(e, t) {
+                                        n(t)
+                                    })
+                                })
+                            }).catch(n)
+                        });
+                    return u(n, t), n
+                },
+                getItem: function(e, t) {
+                    var r = this;
+                    e = l(e);
+                    var n = new i(function(t, n) {
+                        r.ready().then(function() {
+                            var o = r._dbInfo;
+                            o.db.transaction(function(r) {
+                                $(r, o, "SELECT * FROM " + o.storeName + " WHERE key = ? LIMIT 1", [e], function(e, r) {
+                                    var n = r.rows.length ? r.rows.item(0).value : null;
+                                    n && (n = o.serializer.deserialize(n)), t(n)
+                                }, function(e, t) {
+                                    n(t)
+                                })
+                            })
+                        }).catch(n)
+                    });
+                    return u(n, t), n
+                },
+                setItem: function(e, t, r) {
+                    return function e(t, r, n, o) {
+                        var a = this;
+                        t = l(t);
+                        var s = new i(function(i, u) {
+                            a.ready().then(function() {
+                                void 0 === r && (r = null);
+                                var s = r,
+                                    l = a._dbInfo;
+                                l.serializer.serialize(r, function(r, c) {
+                                    c ? u(c) : l.db.transaction(function(e) {
+                                        $(e, l, "INSERT OR REPLACE INTO " + l.storeName + " (key, value) VALUES (?, ?)", [t, r], function() {
+                                            i(s)
+                                        }, function(e, t) {
+                                            u(t)
+                                        })
+                                    }, function(r) {
+                                        if (r.code === r.QUOTA_ERR) {
+                                            if (o > 0) return void i(e.apply(a, [t, s, n, o - 1]));
+                                            u(r)
+                                        }
+                                    })
+                                })
+                            }).catch(u)
+                        });
+                        return u(s, n), s
+                    }.apply(this, [e, t, r, 1])
+                },
+                removeItem: function(e, t) {
+                    var r = this;
+                    e = l(e);
+                    var n = new i(function(t, n) {
+                        r.ready().then(function() {
+                            var o = r._dbInfo;
+                            o.db.transaction(function(r) {
+                                $(r, o, "DELETE FROM " + o.storeName + " WHERE key = ?", [e], function() {
+                                    t()
+                                }, function(e, t) {
+                                    n(t)
+                                })
+                            })
+                        }).catch(n)
+                    });
+                    return u(n, t), n
+                },
+                clear: function(e) {
+                    var t = this,
+                        r = new i(function(e, r) {
+                            t.ready().then(function() {
+                                var n = t._dbInfo;
+                                n.db.transaction(function(t) {
+                                    $(t, n, "DELETE FROM " + n.storeName, [], function() {
+                                        e()
+                                    }, function(e, t) {
+                                        r(t)
+                                    })
+                                })
+                            }).catch(r)
+                        });
+                    return u(r, e), r
+                },
+                length: function(e) {
+                    var t = this,
+                        r = new i(function(e, r) {
+                            t.ready().then(function() {
+                                var n = t._dbInfo;
+                                n.db.transaction(function(t) {
+                                    $(t, n, "SELECT COUNT(key) as c FROM " + n.storeName, [], function(t, r) {
+                                        var n = r.rows.item(0).c;
+                                        e(n)
+                                    }, function(e, t) {
+                                        r(t)
+                                    })
+                                })
+                            }).catch(r)
+                        });
+                    return u(r, e), r
+                },
+                key: function(e, t) {
+                    var r = this,
+                        n = new i(function(t, n) {
+                            r.ready().then(function() {
+                                var o = r._dbInfo;
+                                o.db.transaction(function(r) {
+                                    $(r, o, "SELECT key FROM " + o.storeName + " WHERE id = ? LIMIT 1", [e + 1], function(e, r) {
+                                        var n = r.rows.length ? r.rows.item(0).key : null;
+                                        t(n)
+                                    }, function(e, t) {
+                                        n(t)
+                                    })
+                                })
+                            }).catch(n)
+                        });
+                    return u(n, t), n
+                },
+                keys: function(e) {
+                    var t = this,
+                        r = new i(function(e, r) {
+                            t.ready().then(function() {
+                                var n = t._dbInfo;
+                                n.db.transaction(function(t) {
+                                    $(t, n, "SELECT key FROM " + n.storeName, [], function(t, r) {
+                                        for (var n = [], o = 0; o < r.rows.length; o++) n.push(r.rows.item(o).key);
+                                        e(n)
+                                    }, function(e, t) {
+                                        r(t)
+                                    })
+                                })
+                            }).catch(r)
+                        });
+                    return u(r, e), r
+                },
+                dropInstance: function(e, t) {
+                    t = c.apply(this, arguments);
+                    var r = this.config();
+                    (e = "function" != typeof e && e || {}).name || (e.name = e.name || r.name, e.storeName = e.storeName || r.storeName);
+                    var n, o = this;
+                    return u(n = e.name ? new i(function(t) {
+                        var n;
+                        n = e.name === r.name ? o._dbInfo.db : openDatabase(e.name, "", "", 0), e.storeName ? t({
+                            db: n,
+                            storeNames: [e.storeName]
+                        }) : t(function(e) {
+                            return new i(function(t, r) {
+                                e.transaction(function(n) {
+                                    n.executeSql("SELECT name FROM sqlite_master WHERE type='table' AND name <> '__WebKitDatabaseInfoTable__'", [], function(r, n) {
+                                        for (var o = [], a = 0; a < n.rows.length; a++) o.push(n.rows.item(a).name);
+                                        t({
+                                            db: e,
+                                            storeNames: o
+                                        })
+                                    }, function(e, t) {
+                                        r(t)
+                                    })
+                                }, function(e) {
+                                    r(e)
+                                })
+                            })
+                        }(n))
+                    }).then(function(e) {
+                        return new i(function(t, r) {
+                            e.db.transaction(function(n) {
+                                function o(e) {
+                                    return new i(function(t, r) {
+                                        n.executeSql("DROP TABLE IF EXISTS " + e, [], function() {
+                                            t()
+                                        }, function(e, t) {
+                                            r(t)
+                                        })
+                                    })
+                                }
+                                for (var a = [], u = 0, s = e.storeNames.length; u < s; u++) a.push(o(e.storeNames[u]));
+                                i.all(a).then(function() {
+                                    t()
+                                }).catch(function(e) {
+                                    r(e)
+                                })
+                            }, function(e) {
+                                r(e)
+                            })
+                        })
+                    }) : i.reject("Invalid arguments"), t), n
+                }
+            };
+
+            function ee(e, t) {
+                var r = e.name + "/";
+                return e.storeName !== t.storeName && (r += e.storeName + "/"), r
+            }
+
+            function te() {
+                return ! function() {
+                    try {
+                        return localStorage.setItem("_localforage_support_test", !0), localStorage.removeItem("_localforage_support_test"), !1
+                    } catch (e) {
+                        return !0
+                    }
+                }() || localStorage.length > 0
+            }
+            var re = {
+                    _driver: "localStorageWrapper",
+                    _initStorage: function(e) {
+                        var t = {};
+                        if (e)
+                            for (var r in e) t[r] = e[r];
+                        return t.keyPrefix = ee(e, this._defaultConfig), te() ? (this._dbInfo = t, t.serializer = J, i.resolve()) : i.reject()
+                    },
+                    _support: function() {
+                        try {
+                            return "undefined" != typeof localStorage && "setItem" in localStorage && !!localStorage.setItem
+                        } catch (e) {
+                            return !1
+                        }
+                    }(),
+                    iterate: function(e, t) {
+                        var r = this,
+                            n = r.ready().then(function() {
+                                for (var t = r._dbInfo, n = t.keyPrefix, o = n.length, a = localStorage.length, i = 1, u = 0; u < a; u++) {
+                                    var s = localStorage.key(u);
+                                    if (0 === s.indexOf(n)) {
+                                        var l = localStorage.getItem(s);
+                                        if (l && (l = t.serializer.deserialize(l)), void 0 !== (l = e(l, s.substring(o), i++))) return l
+                                    }
+                                }
+                            });
+                        return u(n, t), n
+                    },
+                    getItem: function(e, t) {
+                        var r = this;
+                        e = l(e);
+                        var n = r.ready().then(function() {
+                            var t = r._dbInfo,
+                                n = localStorage.getItem(t.keyPrefix + e);
+                            return n && (n = t.serializer.deserialize(n)), n
+                        });
+                        return u(n, t), n
+                    },
+                    setItem: function(e, t, r) {
+                        var n = this;
+                        e = l(e);
+                        var o = n.ready().then(function() {
+                            void 0 === t && (t = null);
+                            var r = t;
+                            return new i(function(o, a) {
+                                var i = n._dbInfo;
+                                i.serializer.serialize(t, function(t, n) {
+                                    if (n) a(n);
+                                    else try {
+                                        localStorage.setItem(i.keyPrefix + e, t), o(r)
+                                    } catch (e) {
+                                        "QuotaExceededError" !== e.name && "NS_ERROR_DOM_QUOTA_REACHED" !== e.name || a(e), a(e)
+                                    }
+                                })
+                            })
+                        });
+                        return u(o, r), o
+                    },
+                    removeItem: function(e, t) {
+                        var r = this;
+                        e = l(e);
+                        var n = r.ready().then(function() {
+                            var t = r._dbInfo;
+                            localStorage.removeItem(t.keyPrefix + e)
+                        });
+                        return u(n, t), n
+                    },
+                    clear: function(e) {
+                        var t = this,
+                            r = t.ready().then(function() {
+                                for (var e = t._dbInfo.keyPrefix, r = localStorage.length - 1; r >= 0; r--) {
+                                    var n = localStorage.key(r);
+                                    0 === n.indexOf(e) && localStorage.removeItem(n)
+                                }
+                            });
+                        return u(r, e), r
+                    },
+                    length: function(e) {
+                        var t = this.keys().then(function(e) {
+                            return e.length
+                        });
+                        return u(t, e), t
+                    },
+                    key: function(e, t) {
+                        var r = this,
+                            n = r.ready().then(function() {
+                                var t, n = r._dbInfo;
+                                try {
+                                    t = localStorage.key(e)
+                                } catch (e) {
+                                    t = null
+                                }
+                                return t && (t = t.substring(n.keyPrefix.length)), t
+                            });
+                        return u(n, t), n
+                    },
+                    keys: function(e) {
+                        var t = this,
+                            r = t.ready().then(function() {
+                                for (var e = t._dbInfo, r = localStorage.length, n = [], o = 0; o < r; o++) {
+                                    var a = localStorage.key(o);
+                                    0 === a.indexOf(e.keyPrefix) && n.push(a.substring(e.keyPrefix.length))
+                                }
+                                return n
+                            });
+                        return u(r, e), r
+                    },
+                    dropInstance: function(e, t) {
+                        if (t = c.apply(this, arguments), !(e = "function" != typeof e && e || {}).name) {
+                            var r = this.config();
+                            e.name = e.name || r.name, e.storeName = e.storeName || r.storeName
+                        }
+                        var n, o = this;
+                        return u(n = e.name ? new i(function(t) {
+                            e.storeName ? t(ee(e, o._defaultConfig)) : t(e.name + "/")
+                        }).then(function(e) {
+                            for (var t = localStorage.length - 1; t >= 0; t--) {
+                                var r = localStorage.key(t);
+                                0 === r.indexOf(e) && localStorage.removeItem(r)
+                            }
+                        }) : i.reject("Invalid arguments"), t), n
+                    }
+                },
+                ne = function(e, t) {
+                    for (var r, n, o = e.length, a = 0; a < o;) {
+                        if ((r = e[a]) === (n = t) || "number" == typeof r && "number" == typeof n && isNaN(r) && isNaN(n)) return !0;
+                        a++
+                    }
+                    return !1
+                },
+                oe = Array.isArray || function(e) {
+                    return "[object Array]" === Object.prototype.toString.call(e)
+                },
+                ae = {},
+                ie = {},
+                ue = {
+                    INDEXEDDB: D,
+                    WEBSQL: Z,
+                    LOCALSTORAGE: re
+                },
+                se = [ue.INDEXEDDB._driver, ue.WEBSQL._driver, ue.LOCALSTORAGE._driver],
+                le = ["dropInstance"],
+                ce = ["clear", "getItem", "iterate", "key", "keys", "length", "removeItem", "setItem"].concat(le),
+                de = {
+                    description: "",
+                    driver: se.slice(),
+                    name: "localforage",
+                    size: 4980736,
+                    storeName: "keyvaluepairs",
+                    version: 1
+                };
+
+            function fe(e, t) {
+                e[t] = function() {
+                    var r = arguments;
+                    return e.ready().then(function() {
+                        return e[t].apply(e, r)
+                    })
                 }
             }
 
-            for (var i = 0; i < emuKeyState.length; i++) {
-                var k = emuKeyNames[i]
-                if (vkState[k]) {
-                    if (vkState[k][1]) {
-                        emuKeyState[i] = true
-                    }
+            function me() {
+                for (var e = 1; e < arguments.length; e++) {
+                    var t = arguments[e];
+                    if (t)
+                        for (var r in t) t.hasOwnProperty(r) && (oe(t[r]) ? arguments[0][r] = t[r].slice() : arguments[0][r] = t[r])
                 }
+                return arguments[0]
             }
+            var pe = new(function() {
+                function e(t) {
+                    for (var r in function(e, t) {
+                            if (!(e instanceof t)) throw new TypeError("Cannot call a class as a function")
+                        }(this, e), ue)
+                        if (ue.hasOwnProperty(r)) {
+                            var n = ue[r],
+                                o = n._driver;
+                            this[r] = o, ae[o] || this.defineDriver(n)
+                        } this._defaultConfig = me({}, de), this._config = me({}, this._defaultConfig, t), this._driverSet = null, this._initDriver = null, this._ready = !1, this._dbInfo = null, this._wrapLibraryMethodsWithReady(), this.setDriver(this._config.driver).catch(function() {})
+                }
+                return e.prototype.config = function(e) {
+                    if ("object" === (void 0 === e ? "undefined" : n(e))) {
+                        if (this._ready) return new Error("Can't call config() after localforage has been used.");
+                        for (var t in e) {
+                            if ("storeName" === t && (e[t] = e[t].replace(/\W/g, "_")), "version" === t && "number" != typeof e[t]) return new Error("Database version must be a number.");
+                            this._config[t] = e[t]
+                        }
+                        return !("driver" in e && e.driver) || this.setDriver(this._config.driver)
+                    }
+                    return "string" == typeof e ? this._config[e] : this._config
+                }, e.prototype.defineDriver = function(e, t, r) {
+                    var n = new i(function(t, r) {
+                        try {
+                            var n = e._driver,
+                                o = new Error("Custom driver not compliant; see https://mozilla.github.io/localForage/#definedriver");
+                            if (!e._driver) return void r(o);
+                            for (var a = ce.concat("_initStorage"), s = 0, l = a.length; s < l; s++) {
+                                var c = a[s];
+                                if ((!ne(le, c) || e[c]) && "function" != typeof e[c]) return void r(o)
+                            }! function() {
+                                for (var t = function(e) {
+                                        return function() {
+                                            var t = new Error("Method " + e + " is not implemented by the current driver"),
+                                                r = i.reject(t);
+                                            return u(r, arguments[arguments.length - 1]), r
+                                        }
+                                    }, r = 0, n = le.length; r < n; r++) {
+                                    var o = le[r];
+                                    e[o] || (e[o] = t(o))
+                                }
+                            }();
+                            var d = function(r) {
+                                ae[n] && console.info("Redefining LocalForage driver: " + n), ae[n] = e, ie[n] = r, t()
+                            };
+                            "_support" in e ? e._support && "function" == typeof e._support ? e._support().then(d, r) : d(!!e._support) : d(!0)
+                        } catch (e) {
+                            r(e)
+                        }
+                    });
+                    return s(n, t, r), n
+                }, e.prototype.driver = function() {
+                    return this._driver || null
+                }, e.prototype.getDriver = function(e, t, r) {
+                    var n = ae[e] ? i.resolve(ae[e]) : i.reject(new Error("Driver not found."));
+                    return s(n, t, r), n
+                }, e.prototype.getSerializer = function(e) {
+                    var t = i.resolve(J);
+                    return s(t, e), t
+                }, e.prototype.ready = function(e) {
+                    var t = this,
+                        r = t._driverSet.then(function() {
+                            return null === t._ready && (t._ready = t._initDriver()), t._ready
+                        });
+                    return s(r, e, e), r
+                }, e.prototype.setDriver = function(e, t, r) {
+                    var n = this;
+                    oe(e) || (e = [e]);
+                    var o = this._getSupportedDrivers(e);
 
-            if (needUpdateStick) {
-                vkMap['stick'].style = makeVKStyle(stickY - stickW / 2, stickX - stickW / 2, stickW, stickH, vkStickPos[4])
-            }
+                    function a() {
+                        n._config.driver = n.driver()
+                    }
 
-            stickTouchID = nextStickTouchID
-            tpadTouchID = nextTpadTouchID
-        }
-        ['touchstart', 'touchmove', 'touchend', 'touchcancel', 'touchenter', 'touchleave'].forEach((val) => {
-            window.addEventListener(val, handleTouch)
+                    function u(e) {
+                        return n._extend(e), a(), n._ready = n._initStorage(n._config), n._ready
+                    }
+                    var l = null !== this._driverSet ? this._driverSet.catch(function() {
+                        return i.resolve()
+                    }) : i.resolve();
+                    return this._driverSet = l.then(function() {
+                        var e = o[0];
+                        return n._dbInfo = null, n._ready = null, n.getDriver(e).then(function(e) {
+                            n._driver = e._driver, a(), n._wrapLibraryMethodsWithReady(), n._initDriver = function(e) {
+                                return function() {
+                                    var t = 0;
+                                    return function r() {
+                                        for (; t < e.length;) {
+                                            var o = e[t];
+                                            return t++, n._dbInfo = null, n._ready = null, n.getDriver(o).then(u).catch(r)
+                                        }
+                                        a();
+                                        var s = new Error("No available storage method found.");
+                                        return n._driverSet = i.reject(s), n._driverSet
+                                    }()
+                                }
+                            }(o)
+                        })
+                    }).catch(function() {
+                        a();
+                        var e = new Error("No available storage method found.");
+                        return n._driverSet = i.reject(e), n._driverSet
+                    }), s(this._driverSet, t, r), this._driverSet
+                }, e.prototype.supports = function(e) {
+                    return !!ie[e]
+                }, e.prototype._extend = function(e) {
+                    me(this, e)
+                }, e.prototype._getSupportedDrivers = function(e) {
+                    for (var t = [], r = 0, n = e.length; r < n; r++) {
+                        var o = e[r];
+                        this.supports(o) && t.push(o)
+                    }
+                    return t
+                }, e.prototype._wrapLibraryMethodsWithReady = function() {
+                    for (var e = 0, t = ce.length; e < t; e++) fe(this, ce[e])
+                }, e.prototype.createInstance = function(t) {
+                    return new e(t)
+                }, e
+            }());
+            t.exports = pe
+        }, {
+            3: 3
+        }]
+    }, {}, [4])(4)
+});
+var player = document.querySelector("desmond-player");
+if (player) {
+    var shadow = player.attachShadow({
+        mode: "open"
+    });
+    shadow.innerHTML = '<div id="player">\n        <canvas id="top" width="256" height="192"></canvas>\n        <canvas id="bottom" width="256" height="192"></canvas>';
+    var getFileBlob = function(e, t) {
+            var r = new XMLHttpRequest;
+            r.open("GET", e), r.responseType = "blob", r.addEventListener("load", function() {
+                t(r.response)
+            }), r.send()
+        },
+        blobToFile = function(e, t) {
+            return e.lastModifiedDate = new Date, e.name = t, e
+        },
+        getFileObject = function(e, t) {
+            getFileBlob(e, function(e) {
+                t(blobToFile(e, "test.jpg"))
+            })
+        };
+
+    function loadURL(e, t) {
+        getFileObject(e, function(e) {
+            console.log(e), tryLoadROM(e), status(), t()
         })
+    }
 
+    function status() {
+        console.log("loaded")
+    }
+    player.loadURL = function(e, t) {
+        player.enableMicrophone = function() {
+            var e = Module._realloc(0, 4096),
+                t = Module.HEAPU8.subarray(e, e + 4096);
+            console.log(e, t), navigator.mediaDevices.getUserMedia({
+                audio: !0,
+                video: !1
+            }).then(function(r) {
+                var n = new AudioContext,
+                    o = n.createMediaStreamSource(r),
+                    a = n.createScriptProcessor(2048, 1, 1);
+                o.connect(a), a.onaudioprocess = function(r) {
+                    for (var n = r.inputBuffer.getChannelData(0), o = 0, a = 0; a <= 2045; a += 3) {
+                        var i = Math.floor(64 * ((n[a] + n[a + 1] + n[a + 2]) / 3 + 1));
+                        i > 127 ? i = 127 : i < 0 && (i = 0), t[o++] = i
+                    }
+                    Module._micWriteSamples(e, 682);
+                    for (var u = 0; u < 1; u++)
+                        for (n = r.outputBuffer.getChannelData(u), a = 0; a < 2048; a++) n[a] = 0
+                }, a.connect(n.destination)
+            })
+        }, t ? loadURL(e, t) : loadURL(e)
+    };
+    var plugins = {},
+        config = {
+            swapTopBottom: !1,
+            swapTopBottomL: !1,
+            powerSave: !0,
+            micWhenR: !0,
+            vkEnabled: !0
+        };
 
+    function loadConfig() {
+        var e = JSON.parse(window.localStorage.config || "{}");
+        for (var t in e) config[t] = e[t]
+    }
 
+    function uiSaveConfig() {
+        window.localStorage.config = JSON.stringify(config)
+    }
 
-        window.onmousedown = window.onmouseup = window.onmousemove = (e) => {
-            if (!emuIsRunning) {
-                return
+    function uiMenuBack() {
+        uiSaveConfig(), emuIsGameLoaded ? uiSwitchTo("player") : uiSwitchTo("welcome")
+    }
+
+    function uiSaveBackup() {
+        localforage.getItem("sav-" + gameID).then(e => {
+            var t = new Blob([e], {
+                    type: "application/binary"
+                }),
+                r = document.createElement("a");
+            r.href = window.URL.createObjectURL(t), r.download = "sav-" + gameID + ".dsv", r.click()
+        })
+    }
+    async function uiSaveRestore() {
+        var e = $id("restore-file").files[0];
+        if (e)
+            if (e.size > 2306867.2) alert("Too large! It should not be a save file.");
+            else {
+                var t = new Uint8Array(await e.arrayBuffer());
+                localforage.setItem("sav-" + gameID, t).then(() => {
+                    alert("Save file loaded."), location.reload()
+                })
             }
-            if (e.type == 'mousedown') {
-                tryInitSound()
-            }
+    }
 
-            var r = screenCanvas[1].getBoundingClientRect()
+    function $id(e) {
+        return document.getElementById(e)
+    }
+    loadConfig();
+    var isIOS = !!navigator.platform && /iPad|iPhone|iPod/.test(navigator.platform),
+        isWebApp = navigator.standalone || !1,
+        isSaveSupported = !0,
+        isSaveNagAppeared = !1;
+    if (isIOS && !isWebApp) {
+        isSaveSupported = !1;
+        var divIosHint = $id("ios-hint");
+        divIosHint.hidden = !1, divIosHint.style = "position: absolute; bottom: " + divIosHint.clientHeight + "px;"
+    }
+    var emuKeyState = new Array(14);
+    const e = ["right", "left", "down", "up", "select", "start", "b", "a", "y", "x", "l", "r", "debug", "lid"];
+    for (var vkMap = {}, vkState = {}, keyNameToKeyId = {}, vkStickPos, i = 0; i < e.length; i++) keyNameToKeyId[e[i]] = i;
+    var isLandscape = !1;
+    const t = [39, 37, 40, 38, 16, 13, 90, 88, 65, 83, 81, 87, -1, 8];
+    var emuGameID = "unknown",
+        emuIsRunning = !1,
+        emuIsGameLoaded = !1,
+        fileInput = $id("rom"),
+        romSize = 0,
+        FB = [0, 0],
+        screenCanvas = [shadow.getElementById("top"), shadow.getElementById("bottom")],
+        ctx2d = screenCanvas.map(e => e.getContext("2d", {
+            alpha: !1
+        })),
+        audioContext, audioBuffer, tmpAudioBuffer = new Int16Array(32768),
+        audioWorkletNode, frameCount = 0,
+        touched = 0,
+        touchX = 0,
+        touchY = 0,
+        prevSaveFlag = 0,
+        lastTwoFrameTime = 10,
+        fbSize;
 
-            e.preventDefault()
-            e.stopPropagation()
+    function callPlugin(e, t) {
+        for (var r in plugins) plugins[r].handler && plugins[r].handler(e, t)
+    }
 
-            var isDown = (e.buttons != 0) && (isPointInRect(e.clientX, e.clientY, r))
-            var x = (e.clientX - r.x) / r.width * 256
-            var y = (e.clientY - r.y) / r.height * 192
+    function showMsg(e) {
+        document.getElementById("msg-text").innerText = e, document.getElementById("msg-layer").hidden = !1, setTimeout(function() {
+            document.getElementById("msg-layer").hidden = !0
+        }, 1e3)
+    }
 
-            touched = isDown ? 1 : 0;
-            touchX = x
-            touchY = y
+    function emuRunFrame() {
+        processGamepadInput();
+        for (var e = 0, t = 0; t < 14; t++) emuKeyState[t] && (e |= 1 << t);
+        if (emuKeyState[11] && (console.log("mic"), e |= 16384), config.powerSave && Module._runFrame(0, e, touched, touchX, touchY), Module._runFrame(1, e, touched, touchX, touchY), ctx2d[0].putImageData(FB[0], 0, 0), ctx2d[1].putImageData(FB[1], 0, 0), audioWorkletNode) try {
+            var r = Module._fillAudioBuffer(4096);
+            tmpAudioBuffer.set(audioBuffer.subarray(0, 2 * r)), audioWorkletNode.port.postMessage(tmpAudioBuffer.subarray(0, 2 * r))
+        } catch (e) {
+            console.log(e)
         }
+        frameCount += 1
+    }
 
-        function convertKeyCode(keyCode) {
-            for (var i = 0; i < 14; i++) {
-                if (keyCode == emuKeyboradMapping[i]) {
-                    return i
-                }
-            }
-            return -1
-        }
-        window.onkeydown = window.onkeyup = (e) => {
-            if (!emuIsRunning) {
-                return
-            }
-            e.preventDefault()
-            var isDown = (e.type === "keydown")
-            var k = convertKeyCode(e.keyCode)
-            if (k >= 0) {
-                emuKeyState[k] = isDown
-            }
-            if (e.keyCode == 27) {
-                uiSwitchTo('menu')
+    function wasmReady() {
+        Module._setSampleRate(47860)
+    }
+
+    function checkSaveGame() {
+        var e = Module._savUpdateChangeFlag();
+        if (0 == e && 1 == prevSaveFlag) {
+            var t = Module._savGetSize();
+            if (t > 0 && isSaveSupported) {
+                var r = Module._savGetPointer(0),
+                    n = new Uint8Array(t);
+                n.set(Module.HEAPU8.subarray(r, r + t)), localforage.setItem("sav-" + gameID, n), showMsg("Auto saving...")
             }
         }
+        prevSaveFlag = e
+    }
+    async function tryLoadROM(e) {
+        if (e && !(e.size < 1024)) {
+            var t = new Uint8Array(await e.slice(0, 1024).arrayBuffer());
+            gameID = "";
+            for (var r = 0; r < 16; r++) gameID += 0 == t[r] ? " " : String.fromCharCode(t[r]);
+            "#" == gameID[12] && (gameID = e.name), console.log("gameID", gameID), romSize = e.size;
+            var n = Module._prepareRomBuffer(romSize);
+            console.log(romSize, n), Module.HEAPU8.set(new Uint8Array(await e.arrayBuffer()), n);
+            var o = await localforage.getItem("sav-" + gameID);
+            if (o && Module.HEAPU8.set(o, Module._savGetPointer(o.length)), Module._savUpdateChangeFlag(), 1 == Module._loadROM(romSize)) {
+                ptrFrontBuffer = Module._getSymbol(5);
+                var a = Module._getSymbol(4);
+                for (r = 0; r < 2; r++) FB[r] = new ImageData(new Uint8ClampedArray(Module.HEAPU8.buffer).subarray(a + 196608 * r, a + 196608 * (r + 1)), 256, 192);
+                var i = Module._getSymbol(6);
+                audioBuffer = new Int16Array(Module.HEAPU8.buffer).subarray(i / 2, i / 2 + 32768), console.log("Start!!!"), emuIsGameLoaded = !0, emuIsRunning = !0, shadow.querySelector("#player").hidden = !1, callPlugin("loaded", gameID)
+            } else alert("LoadROM failed.")
+        }
+    }
 
-        var currentConnectedGamepad = -1
-        var gamePadKeyMap = {
+    function tryInitSound() {
+        try {
+            if (audioContext) return void("running" != audioContext.state && audioContext.resume());
+            (audioContext = new(window.AudioContext || window.webkitAudioContext)({
+                latencyHint: 1e-4,
+                sampleRate: 48e3
+            })).audioWorklet ? audioContext.audioWorklet.addModule(URL.createObjectURL(new Blob(["class MyAudioWorklet extends AudioWorkletProcessor {\n    constructor() {\n        super()\n        this.FIFO_CAP = 5000\n        this.fifo0 = new Int16Array(this.FIFO_CAP)\n        this.fifo1 = new Int16Array(this.FIFO_CAP)\n        this.fifoHead = 0\n        this.fifoLen = 0\n        this.port.onmessage = (e) => {\n            //console.log(this.fifoLen)\n            var buf = e.data\n            var samplesReceived = buf.length / 2\n            if (this.fifoLen + samplesReceived >= this.FIFO_CAP) {\n                console.log('o')\n                return\n            }\n\n            for (var i = 0; i < buf.length; i+=2) {\n                this.fifoEnqueue(buf[i], buf[i+1])\n            }\n        }\n    }\n\n    fifoDequeue() {\n        this.fifoHead += 1\n        this.fifoHead %= this.FIFO_CAP\n        this.fifoLen -= 1\n    }\n\n    fifoEnqueue(a, b) {\n        const pos = (this.fifoHead + this.fifoLen) % this.FIFO_CAP\n        this.fifo0[pos] = a\n        this.fifo1[pos] = b\n        this.fifoLen += 1\n    }\n\n    process(inputs, outputs, parameters) {\n        const output = outputs[0]\n        const chan0 = output[0]\n        const chan1 = output[1]\n\n        for (var i = 0; i < chan0.length; i++) {\n            if (this.fifoLen < 1) {\n                console.log(\"u\")\n                break\n            }\n            chan0[i] = this.fifo0[this.fifoHead] / 32768.0\n            chan1[i] = this.fifo1[this.fifoHead] / 32768.0\n            this.fifoDequeue()\n        }\n        return true\n    }\n}\n\nregisterProcessor('my-worklet', MyAudioWorklet)"], {
+                type: "text/javascript"
+            }))).then(() => {
+                (audioWorkletNode = new AudioWorkletNode(audioContext, "my-worklet", {
+                    outputChannelCount: [2]
+                })).connect(audioContext.destination)
+            }) : alert("AudioWorklet is not supported in your browser..."), audioContext.resume()
+        } catch (e) {
+            console.log(e)
+        }
+    }
+    var prevRunFrameTime = performance.now();
+
+    function emuLoop() {
+        if (window.requestAnimationFrame(emuLoop), emuIsRunning) {
+            if (config.powerSave && performance.now() - prevRunFrameTime < 32) return;
+            prevRunFrameTime = performance.now(), emuRunFrame()
+        }
+    }
+    emuLoop();
+    var stickTouchID = null,
+        tpadTouchID = null;
+
+    function isPointInRect(e, t, r) {
+        return e >= r.x && e < r.x + r.width && t >= r.y && t < r.y + r.height
+    }
+
+    function clamp01(e) {
+        return e < 0 ? 0 : e > 1 ? 1 : e
+    }
+
+    function handleTouch(t) {
+        if (tryInitSound(), emuIsRunning) {
+            t.preventDefault(), t.stopPropagation();
+            for (var r = !1, n = 0, o = 0, a = !1, i = vkStickPos[0], u = vkStickPos[1], s = vkStickPos[2], l = vkStickPos[3], c = .4 * s, d = null, f = null, m = screenCanvas[1].getBoundingClientRect(), p = 0; p < emuKeyState.length; p++) emuKeyState[p] = !1;
+            for (var h in vkState) vkState[h][1] = 0;
+            for (p = 0; p < t.touches.length; p++) {
+                var _ = t.touches[p],
+                    v = _.identifier;
+                h = (g = document.elementFromPoint(_.clientX, _.clientY)) ? g.getAttribute("data-k") : null;
+                if (v === stickTouchID || g == vkMap.stick && v != tpadTouchID) {
+                    !0, vkState.stick[1] = 1;
+                    var S = _.clientX,
+                        y = _.clientY;
+                    S < u - c && (emuKeyState[1] = !0), S > u + c && (emuKeyState[0] = !0), y < i - c && (emuKeyState[3] = !0), y > i + c && (emuKeyState[2] = !0), S = Math.max(u - s / 2, S), S = Math.min(u + s / 2, S), y = Math.max(i - l / 2, y), u = S, i = y = Math.min(i + l / 2, y), a = !0, d = v
+                } else v === tpadTouchID || isPointInRect(_.clientX, _.clientY, m) && !h ? (r = !0, n = 256 * clamp01((_.clientX - m.x) / m.width), o = 192 * clamp01((_.clientY - m.y) / m.height), f = v) : h && (vkState[h][1] = 1)
+            }
+            for (var h in touched = r ? 1 : 0, touchX = n, touchY = o, vkState)
+                if (vkState[h][0] != vkState[h][1]) {
+                    var g = vkMap[h];
+                    vkState[h][0] = vkState[h][1], vkState[h][1] ? (g.classList.add("vk-touched"), "menu" == h && uiSwitchTo("menu")) : (g.classList.remove("vk-touched"), "stick" == h && (a = !0))
+                } for (p = 0; p < emuKeyState.length; p++) {
+                h = e[p];
+                vkState[h] && vkState[h][1] && (emuKeyState[p] = !0)
+            }
+            a && (vkMap.stick.style = makeVKStyle(i - s / 2, u - s / 2, s, l, vkStickPos[4])), stickTouchID = d, tpadTouchID = f
+        }
+    }
+
+    function convertKeyCode(e) {
+        for (var r = 0; r < 14; r++)
+            if (e == t[r]) return r;
+        return -1
+    } ["touchstart", "touchmove", "touchend", "touchcancel", "touchenter", "touchleave"].forEach(e => {
+        window.addEventListener(e, handleTouch)
+    }), window.onmousedown = window.onmouseup = window.onmousemove = (e => {
+        if (emuIsRunning) {
+            "mousedown" == e.type && tryInitSound();
+            var t = screenCanvas[1].getBoundingClientRect();
+            e.preventDefault(), e.stopPropagation();
+            var r = 0 != e.buttons && isPointInRect(e.clientX, e.clientY, t),
+                n = (e.clientX - t.x) / t.width * 256,
+                o = (e.clientY - t.y) / t.height * 192;
+            touched = r ? 1 : 0, touchX = n, touchY = o
+        }
+    }), window.onkeydown = window.onkeyup = (e => {
+        if (emuIsRunning) {
+            e.preventDefault();
+            var t = "keydown" === e.type,
+                r = convertKeyCode(e.keyCode);
+            r >= 0 && (emuKeyState[r] = t), 27 == e.keyCode && uiSwitchTo("menu")
+        }
+    });
+    var currentConnectedGamepad = -1,
+        gamePadKeyMap = {
             a: 1,
             b: 0,
             x: 3,
             y: 2,
             l: 4,
             r: 5,
-            'select': 9,
-            'start': 16,
-            'up': 12,
-            'down': 13,
-            'left': 14,
-            'right': 15
+            select: 9,
+            start: 16,
+            up: 12,
+            down: 13,
+            left: 14,
+            right: 15
+        };
+
+    function processGamepadInput() {
+        if (!(currentConnectedGamepad < 0)) {
+            var e = navigator.getGamepads()[currentConnectedGamepad];
+            if (!e) return showMsg("Gamepad disconnected."), void(currentConnectedGamepad = -1);
+            for (var t = 0; t < emuKeyState.length; t++) emuKeyState[t] = !1;
+            for (var r in gamePadKeyMap) e.buttons[gamePadKeyMap[r]].pressed && (emuKeyState[keyNameToKeyId[r]] = !0);
+            e.axes[0] < -.5 && (emuKeyState[keyNameToKeyId.left] = !0), e.axes[0] > .5 && (emuKeyState[keyNameToKeyId.right] = !0), e.axes[1] < -.5 && (emuKeyState[keyNameToKeyId.up] = !0), e.axes[1] > .5 && (emuKeyState[keyNameToKeyId.down] = !0)
         }
+    }
 
-        window.addEventListener("gamepadconnected", function (e) {
-            console.log("Gamepad connected at index %d: %s. %d buttons, %d axes.",
-                e.gamepad.index, e.gamepad.id,
-                e.gamepad.buttons.length, e.gamepad.axes.length);
-            showMsg('Gamepad connected.')
-            currentConnectedGamepad = e.gamepad.index
+    function whatsNew() {
+        alert("\n1. Added setting option to hide the virtual keyboard.\n")
+    }
+    window.addEventListener("gamepadconnected", function(e) {
+        console.log("Gamepad connected at index %d: %s. %d buttons, %d axes.", e.gamepad.index, e.gamepad.id, e.gamepad.buttons.length, e.gamepad.axes.length), showMsg("Gamepad connected."), currentConnectedGamepad = e.gamepad.index
+    })
+} else console.log("No Desmond player found!");
+var Module = void 0 !== Module ? Module : {},
+    moduleOverrides = Object.assign({}, Module),
+    arguments_ = [],
+    thisProgram = "./this.program",
+    quit_ = (e, t) => {
+        throw t
+    },
+    ENVIRONMENT_IS_WEB = "object" == typeof window,
+    ENVIRONMENT_IS_WORKER = "function" == typeof importScripts,
+    ENVIRONMENT_IS_NODE = "object" == typeof process && "object" == typeof process.versions && "string" == typeof process.versions.node,
+    scriptDirectory = "",
+    read_, readAsync, readBinary, setWindowTitle, fs, nodePath, requireNodeFS;
 
+function locateFile(e) {
+    return Module.locateFile ? Module.locateFile(e, scriptDirectory) : scriptDirectory + e
+}
+
+function logExceptionOnExit(e) {
+    if (e instanceof ExitStatus) return;
+    err("exiting due to exception: " + e)
+}
+ENVIRONMENT_IS_NODE ? (scriptDirectory = ENVIRONMENT_IS_WORKER ? require("path").dirname(scriptDirectory) + "/" : __dirname + "/", requireNodeFS = (() => {
+    nodePath || (fs = require("fs"), nodePath = require("path"))
+}), read_ = function(e, t) {
+    return requireNodeFS(), e = nodePath.normalize(e), fs.readFileSync(e, t ? void 0 : "utf8")
+}, readBinary = (e => {
+    var t = read_(e, !0);
+    return t.buffer || (t = new Uint8Array(t)), t
+}), readAsync = ((e, t, r) => {
+    requireNodeFS(), e = nodePath.normalize(e), fs.readFile(e, function(e, n) {
+        e ? r(e) : t(n.buffer)
+    })
+}), process.argv.length > 1 && (thisProgram = process.argv[1].replace(/\\/g, "/")), arguments_ = process.argv.slice(2), "undefined" != typeof module && (module.exports = Module), process.on("uncaughtException", function(e) {
+    if (!(e instanceof ExitStatus)) throw e
+}), process.on("unhandledRejection", function(e) {
+    throw e
+}), quit_ = ((e, t) => {
+    if (keepRuntimeAlive()) throw process.exitCode = e, t;
+    logExceptionOnExit(t), process.exit(e)
+}), Module.inspect = function() {
+    return "[Emscripten Module object]"
+}) : (ENVIRONMENT_IS_WEB || ENVIRONMENT_IS_WORKER) && (ENVIRONMENT_IS_WORKER ? scriptDirectory = self.location.href : "undefined" != typeof document && document.currentScript && (scriptDirectory = document.currentScript.src), scriptDirectory = 0 !== scriptDirectory.indexOf("blob:") ? scriptDirectory.substr(0, scriptDirectory.replace(/[?#].*/, "").lastIndexOf("/") + 1) : "", read_ = (e => {
+    var t = new XMLHttpRequest;
+    return t.open("GET", e, !1), t.send(null), t.responseText
+}), ENVIRONMENT_IS_WORKER && (readBinary = (e => {
+    var t = new XMLHttpRequest;
+    return t.open("GET", e, !1), t.responseType = "arraybuffer", t.send(null), new Uint8Array(t.response)
+})), readAsync = ((e, t, r) => {
+    var n = new XMLHttpRequest;
+    n.open("GET", e, !0), n.responseType = "arraybuffer", n.onload = (() => {
+        200 == n.status || 0 == n.status && n.response ? t(n.response) : r()
+    }), n.onerror = r, n.send(null)
+}), setWindowTitle = (e => document.title = e));
+var out = Module.print || console.log.bind(console),
+    err = Module.printErr || console.warn.bind(console);
+Object.assign(Module, moduleOverrides), moduleOverrides = null, Module.arguments && (arguments_ = Module.arguments), Module.thisProgram && (thisProgram = Module.thisProgram), Module.quit && (quit_ = Module.quit);
+var tempRet0 = 0,
+    setTempRet0 = e => {
+        tempRet0 = e
+    },
+    wasmBinary;
+Module.wasmBinary && (wasmBinary = Module.wasmBinary);
+var noExitRuntime = Module.noExitRuntime || !0,
+    wasmMemory;
+"object" != typeof WebAssembly && abort("no native wasm support detected");
+var ABORT = !1,
+    EXITSTATUS;
+
+function assert(e, t) {
+    e || abort(t)
+}
+var UTF8Decoder = "undefined" != typeof TextDecoder ? new TextDecoder("utf8") : void 0,
+    buffer, HEAP8, HEAPU8, HEAP16, HEAPU16, HEAP32, HEAPU32, HEAPF32, HEAPF64;
+
+function UTF8ArrayToString(e, t, r) {
+    for (var n = t + r, o = t; e[o] && !(o >= n);) ++o;
+    if (o - t > 16 && e.subarray && UTF8Decoder) return UTF8Decoder.decode(e.subarray(t, o));
+    for (var a = ""; t < o;) {
+        var i = e[t++];
+        if (128 & i) {
+            var u = 63 & e[t++];
+            if (192 != (224 & i)) {
+                var s = 63 & e[t++];
+                if ((i = 224 == (240 & i) ? (15 & i) << 12 | u << 6 | s : (7 & i) << 18 | u << 12 | s << 6 | 63 & e[t++]) < 65536) a += String.fromCharCode(i);
+                else {
+                    var l = i - 65536;
+                    a += String.fromCharCode(55296 | l >> 10, 56320 | 1023 & l)
+                }
+            } else a += String.fromCharCode((31 & i) << 6 | u)
+        } else a += String.fromCharCode(i)
+    }
+    return a
+}
+
+function UTF8ToString(e, t) {
+    return e ? UTF8ArrayToString(HEAPU8, e, t) : ""
+}
+
+function stringToUTF8Array(e, t, r, n) {
+    if (!(n > 0)) return 0;
+    for (var o = r, a = r + n - 1, i = 0; i < e.length; ++i) {
+        var u = e.charCodeAt(i);
+        if (u >= 55296 && u <= 57343) u = 65536 + ((1023 & u) << 10) | 1023 & e.charCodeAt(++i);
+        if (u <= 127) {
+            if (r >= a) break;
+            t[r++] = u
+        } else if (u <= 2047) {
+            if (r + 1 >= a) break;
+            t[r++] = 192 | u >> 6, t[r++] = 128 | 63 & u
+        } else if (u <= 65535) {
+            if (r + 2 >= a) break;
+            t[r++] = 224 | u >> 12, t[r++] = 128 | u >> 6 & 63, t[r++] = 128 | 63 & u
+        } else {
+            if (r + 3 >= a) break;
+            t[r++] = 240 | u >> 18, t[r++] = 128 | u >> 12 & 63, t[r++] = 128 | u >> 6 & 63, t[r++] = 128 | 63 & u
+        }
+    }
+    return t[r] = 0, r - o
+}
+
+function stringToUTF8(e, t, r) {
+    return stringToUTF8Array(e, HEAPU8, t, r)
+}
+
+function lengthBytesUTF8(e) {
+    for (var t = 0, r = 0; r < e.length; ++r) {
+        var n = e.charCodeAt(r);
+        n >= 55296 && n <= 57343 && (n = 65536 + ((1023 & n) << 10) | 1023 & e.charCodeAt(++r)), n <= 127 ? ++t : t += n <= 2047 ? 2 : n <= 65535 ? 3 : 4
+    }
+    return t
+}
+
+function allocateUTF8(e) {
+    var t = lengthBytesUTF8(e) + 1,
+        r = _malloc(t);
+    return r && stringToUTF8Array(e, HEAP8, r, t), r
+}
+
+function writeArrayToMemory(e, t) {
+    HEAP8.set(e, t)
+}
+
+function writeAsciiToMemory(e, t, r) {
+    for (var n = 0; n < e.length; ++n) HEAP8[t++ >> 0] = e.charCodeAt(n);
+    r || (HEAP8[t >> 0] = 0)
+}
+
+function updateGlobalBufferAndViews(e) {
+    buffer = e, Module.HEAP8 = HEAP8 = new Int8Array(e), Module.HEAP16 = HEAP16 = new Int16Array(e), Module.HEAP32 = HEAP32 = new Int32Array(e), Module.HEAPU8 = HEAPU8 = new Uint8Array(e), Module.HEAPU16 = HEAPU16 = new Uint16Array(e), Module.HEAPU32 = HEAPU32 = new Uint32Array(e), Module.HEAPF32 = HEAPF32 = new Float32Array(e), Module.HEAPF64 = HEAPF64 = new Float64Array(e)
+}
+var INITIAL_MEMORY = Module.INITIAL_MEMORY || 681574400,
+    wasmTable, __ATPRERUN__ = [],
+    __ATINIT__ = [],
+    __ATMAIN__ = [],
+    __ATPOSTRUN__ = [],
+    runtimeInitialized = !1,
+    runtimeExited = !1,
+    runtimeKeepaliveCounter = 0;
+
+function keepRuntimeAlive() {
+    return noExitRuntime || runtimeKeepaliveCounter > 0
+}
+
+function preRun() {
+    if (Module.preRun)
+        for ("function" == typeof Module.preRun && (Module.preRun = [Module.preRun]); Module.preRun.length;) addOnPreRun(Module.preRun.shift());
+    callRuntimeCallbacks(__ATPRERUN__)
+}
+
+function initRuntime() {
+    runtimeInitialized = !0, Module.noFSInit || FS.init.initialized || FS.init(), FS.ignorePermissions = !1, TTY.init(), callRuntimeCallbacks(__ATINIT__)
+}
+
+function preMain() {
+    callRuntimeCallbacks(__ATMAIN__)
+}
+
+function exitRuntime() {
+    runtimeExited = !0
+}
+
+function postRun() {
+    if (Module.postRun)
+        for ("function" == typeof Module.postRun && (Module.postRun = [Module.postRun]); Module.postRun.length;) addOnPostRun(Module.postRun.shift());
+    callRuntimeCallbacks(__ATPOSTRUN__)
+}
+
+function addOnPreRun(e) {
+    __ATPRERUN__.unshift(e)
+}
+
+function addOnInit(e) {
+    __ATINIT__.unshift(e)
+}
+
+function addOnPostRun(e) {
+    __ATPOSTRUN__.unshift(e)
+}
+var runDependencies = 0,
+    runDependencyWatcher = null,
+    dependenciesFulfilled = null;
+
+function getUniqueRunDependency(e) {
+    return e
+}
+
+function addRunDependency(e) {
+    runDependencies++, Module.monitorRunDependencies && Module.monitorRunDependencies(runDependencies)
+}
+
+function removeRunDependency(e) {
+    if (runDependencies--, Module.monitorRunDependencies && Module.monitorRunDependencies(runDependencies), 0 == runDependencies && (null !== runDependencyWatcher && (clearInterval(runDependencyWatcher), runDependencyWatcher = null), dependenciesFulfilled)) {
+        var t = dependenciesFulfilled;
+        dependenciesFulfilled = null, t()
+    }
+}
+
+function abort(e) {
+    throw Module.onAbort && Module.onAbort(e), err(e = "Aborted(" + e + ")"), ABORT = !0, EXITSTATUS = 1, e += ". Build with -s ASSERTIONS=1 for more info.", new WebAssembly.RuntimeError(e)
+}
+Module.preloadedImages = {}, Module.preloadedAudios = {};
+var dataURIPrefix = "data:application/octet-stream;base64,",
+    wasmBinaryFile, tempDouble, tempI64;
+
+function isDataURI(e) {
+    return e.startsWith(dataURIPrefix)
+}
+
+function isFileURI(e) {
+    return e.startsWith("file://")
+}
+
+function getBinary(e) {
+    try {
+        if (e == wasmBinaryFile && wasmBinary) return new Uint8Array(wasmBinary);
+        if (readBinary) return readBinary(e);
+        throw "both async and sync fetching of the wasm failed"
+    } catch (e) {
+        abort(e)
+    }
+}
+
+function getBinaryPromise() {
+    if (!wasmBinary && (ENVIRONMENT_IS_WEB || ENVIRONMENT_IS_WORKER)) {
+        if ("function" == typeof fetch && !isFileURI(wasmBinaryFile)) return fetch(wasmBinaryFile, {
+            credentials: "same-origin"
+        }).then(function(e) {
+            if (!e.ok) throw "failed to load wasm binary file at '" + wasmBinaryFile + "'";
+            return e.arrayBuffer()
+        }).catch(function() {
+            return getBinary(wasmBinaryFile)
         });
+        if (readAsync) return new Promise(function(e, t) {
+            readAsync(wasmBinaryFile, function(t) {
+                e(new Uint8Array(t))
+            }, t)
+        })
+    }
+    return Promise.resolve().then(function() {
+        return getBinary(wasmBinaryFile)
+    })
+}
 
-        function processGamepadInput() {
-            if (currentConnectedGamepad < 0) {
-                return
+function createWasm() {
+    var e = {
+        a: asmLibraryArg
+    };
+
+    function t(e, t) {
+        var r = e.exports;
+        Module.asm = r, updateGlobalBufferAndViews((wasmMemory = Module.asm.x).buffer), wasmTable = Module.asm.S, addOnInit(Module.asm.y), removeRunDependency("wasm-instantiate")
+    }
+
+    function r(e) {
+        t(e.instance)
+    }
+
+    function n(t) {
+        return getBinaryPromise().then(function(t) {
+            return WebAssembly.instantiate(t, e)
+        }).then(function(e) {
+            return e
+        }).then(t, function(e) {
+            err("failed to asynchronously prepare wasm: " + e), abort(e)
+        })
+    }
+    if (addRunDependency("wasm-instantiate"), Module.instantiateWasm) try {
+        return Module.instantiateWasm(e, t)
+    } catch (e) {
+        return err("Module.instantiateWasm callback failed with error: " + e), !1
+    }
+    return wasmBinary || "function" != typeof WebAssembly.instantiateStreaming || isDataURI(wasmBinaryFile) || isFileURI(wasmBinaryFile) || "function" != typeof fetch ? n(r) : fetch(wasmBinaryFile, {
+        credentials: "same-origin"
+    }).then(function(t) {
+        return WebAssembly.instantiateStreaming(t, e).then(r, function(e) {
+            return err("wasm streaming compile failed: " + e), err("falling back to ArrayBuffer instantiation"), n(r)
+        })
+    }), {}
+}
+wasmBinaryFile = "desmond.wasm", isDataURI(wasmBinaryFile) || (wasmBinaryFile = locateFile(wasmBinaryFile));
+var ASM_CONSTS = {
+    464896: function() {
+        wasmReady()
+    }
+};
+
+function callRuntimeCallbacks(e) {
+    for (; e.length > 0;) {
+        var t = e.shift();
+        if ("function" != typeof t) {
+            var r = t.func;
+            "number" == typeof r ? void 0 === t.arg ? getWasmTableEntry(r)() : getWasmTableEntry(r)(t.arg) : r(void 0 === t.arg ? null : t.arg)
+        } else t(Module)
+    }
+}
+
+function withStackSave(e) {
+    var t = stackSave(),
+        r = e();
+    return stackRestore(t), r
+}
+
+function demangle(e) {
+    return e
+}
+
+function demangleAll(e) {
+    return e.replace(/\b_Z[\w\d_]+/g, function(e) {
+        var t = demangle(e);
+        return e === t ? e : t + " [" + e + "]"
+    })
+}
+Module.callRuntimeCallbacks = callRuntimeCallbacks, Module.withStackSave = withStackSave, Module.demangle = demangle, Module.demangleAll = demangleAll;
+var wasmTableMirror = [];
+
+function getWasmTableEntry(e) {
+    var t = wasmTableMirror[e];
+    return t || (e >= wasmTableMirror.length && (wasmTableMirror.length = e + 1), wasmTableMirror[e] = t = wasmTable.get(e)), t
+}
+
+function handleException(e) {
+    if (e instanceof ExitStatus || "unwind" == e) return EXITSTATUS;
+    quit_(1, e)
+}
+
+function jsStackTrace() {
+    var e = new Error;
+    if (!e.stack) {
+        try {
+            throw new Error
+        } catch (t) {
+            e = t
+        }
+        if (!e.stack) return "(no stack trace available)"
+    }
+    return e.stack.toString()
+}
+
+function setWasmTableEntry(e, t) {
+    wasmTable.set(e, t), wasmTableMirror[e] = t
+}
+
+function stackTrace() {
+    var e = jsStackTrace();
+    return Module.extraStackTrace && (e += "\n" + Module.extraStackTrace()), demangleAll(e)
+}
+
+function ___assert_fail(e, t, r, n) {
+    abort("Assertion failed: " + UTF8ToString(e) + ", at: " + [t ? UTF8ToString(t) : "unknown filename", r, n ? UTF8ToString(n) : "unknown function"])
+}
+
+function ___cxa_allocate_exception(e) {
+    return _malloc(e + 16) + 16
+}
+
+function ExceptionInfo(e) {
+    this.excPtr = e, this.ptr = e - 16, this.set_type = function(e) {
+        HEAP32[this.ptr + 4 >> 2] = e
+    }, this.get_type = function() {
+        return HEAP32[this.ptr + 4 >> 2]
+    }, this.set_destructor = function(e) {
+        HEAP32[this.ptr + 8 >> 2] = e
+    }, this.get_destructor = function() {
+        return HEAP32[this.ptr + 8 >> 2]
+    }, this.set_refcount = function(e) {
+        HEAP32[this.ptr >> 2] = e
+    }, this.set_caught = function(e) {
+        e = e ? 1 : 0, HEAP8[this.ptr + 12 >> 0] = e
+    }, this.get_caught = function() {
+        return 0 != HEAP8[this.ptr + 12 >> 0]
+    }, this.set_rethrown = function(e) {
+        e = e ? 1 : 0, HEAP8[this.ptr + 13 >> 0] = e
+    }, this.get_rethrown = function() {
+        return 0 != HEAP8[this.ptr + 13 >> 0]
+    }, this.init = function(e, t) {
+        this.set_type(e), this.set_destructor(t), this.set_refcount(0), this.set_caught(!1), this.set_rethrown(!1)
+    }, this.add_ref = function() {
+        var e = HEAP32[this.ptr >> 2];
+        HEAP32[this.ptr >> 2] = e + 1
+    }, this.release_ref = function() {
+        var e = HEAP32[this.ptr >> 2];
+        return HEAP32[this.ptr >> 2] = e - 1, 1 === e
+    }
+}
+Module.wasmTableMirror = wasmTableMirror, Module.getWasmTableEntry = getWasmTableEntry, Module.handleException = handleException, Module.jsStackTrace = jsStackTrace, Module.setWasmTableEntry = setWasmTableEntry, Module.stackTrace = stackTrace, Module.___assert_fail = ___assert_fail, Module.___cxa_allocate_exception = ___cxa_allocate_exception, Module.ExceptionInfo = ExceptionInfo;
+var exceptionLast = 0;
+Module.exceptionLast = exceptionLast;
+var uncaughtExceptionCount = 0;
+
+function ___cxa_throw(e, t, r) {
+    throw new ExceptionInfo(e).init(t, r), exceptionLast = e, uncaughtExceptionCount++, e
+}
+
+function setErrNo(e) {
+    return HEAP32[___errno_location() >> 2] = e, e
+}
+Module.uncaughtExceptionCount = uncaughtExceptionCount, Module.___cxa_throw = ___cxa_throw, Module.setErrNo = setErrNo;
+var PATH = {
+    splitPath: function(e) {
+        return /^(\/?|)([\s\S]*?)((?:\.{1,2}|[^\/]+?|)(\.[^.\/]*|))(?:[\/]*)$/.exec(e).slice(1)
+    },
+    normalizeArray: function(e, t) {
+        for (var r = 0, n = e.length - 1; n >= 0; n--) {
+            var o = e[n];
+            "." === o ? e.splice(n, 1) : ".." === o ? (e.splice(n, 1), r++) : r && (e.splice(n, 1), r--)
+        }
+        if (t)
+            for (; r; r--) e.unshift("..");
+        return e
+    },
+    normalize: function(e) {
+        var t = "/" === e.charAt(0),
+            r = "/" === e.substr(-1);
+        return (e = PATH.normalizeArray(e.split("/").filter(function(e) {
+            return !!e
+        }), !t).join("/")) || t || (e = "."), e && r && (e += "/"), (t ? "/" : "") + e
+    },
+    dirname: function(e) {
+        var t = PATH.splitPath(e),
+            r = t[0],
+            n = t[1];
+        return r || n ? (n && (n = n.substr(0, n.length - 1)), r + n) : "."
+    },
+    basename: function(e) {
+        if ("/" === e) return "/";
+        var t = (e = (e = PATH.normalize(e)).replace(/\/$/, "")).lastIndexOf("/");
+        return -1 === t ? e : e.substr(t + 1)
+    },
+    extname: function(e) {
+        return PATH.splitPath(e)[3]
+    },
+    join: function() {
+        var e = Array.prototype.slice.call(arguments, 0);
+        return PATH.normalize(e.join("/"))
+    },
+    join2: function(e, t) {
+        return PATH.normalize(e + "/" + t)
+    }
+};
+
+function getRandomDevice() {
+    if ("object" == typeof crypto && "function" == typeof crypto.getRandomValues) {
+        var e = new Uint8Array(1);
+        return function() {
+            return crypto.getRandomValues(e), e[0]
+        }
+    }
+    if (ENVIRONMENT_IS_NODE) try {
+        var t = require("crypto");
+        return function() {
+            return t.randomBytes(1)[0]
+        }
+    } catch (e) {}
+    return function() {
+        abort("randomDevice")
+    }
+}
+Module.PATH = PATH, Module.getRandomDevice = getRandomDevice;
+var PATH_FS = {
+    resolve: function() {
+        for (var e = "", t = !1, r = arguments.length - 1; r >= -1 && !t; r--) {
+            var n = r >= 0 ? arguments[r] : FS.cwd();
+            if ("string" != typeof n) throw new TypeError("Arguments to path.resolve must be strings");
+            if (!n) return "";
+            e = n + "/" + e, t = "/" === n.charAt(0)
+        }
+        return (t ? "/" : "") + (e = PATH.normalizeArray(e.split("/").filter(function(e) {
+            return !!e
+        }), !t).join("/")) || "."
+    },
+    relative: function(e, t) {
+        function r(e) {
+            for (var t = 0; t < e.length && "" === e[t]; t++);
+            for (var r = e.length - 1; r >= 0 && "" === e[r]; r--);
+            return t > r ? [] : e.slice(t, r - t + 1)
+        }
+        e = PATH_FS.resolve(e).substr(1), t = PATH_FS.resolve(t).substr(1);
+        for (var n = r(e.split("/")), o = r(t.split("/")), a = Math.min(n.length, o.length), i = a, u = 0; u < a; u++)
+            if (n[u] !== o[u]) {
+                i = u;
+                break
+            } var s = [];
+        for (u = i; u < n.length; u++) s.push("..");
+        return (s = s.concat(o.slice(i))).join("/")
+    }
+};
+Module.PATH_FS = PATH_FS;
+var TTY = {
+    ttys: [],
+    init: function() {},
+    shutdown: function() {},
+    register: function(e, t) {
+        TTY.ttys[e] = {
+            input: [],
+            output: [],
+            ops: t
+        }, FS.registerDevice(e, TTY.stream_ops)
+    },
+    stream_ops: {
+        open: function(e) {
+            var t = TTY.ttys[e.node.rdev];
+            if (!t) throw new FS.ErrnoError(43);
+            e.tty = t, e.seekable = !1
+        },
+        close: function(e) {
+            e.tty.ops.flush(e.tty)
+        },
+        flush: function(e) {
+            e.tty.ops.flush(e.tty)
+        },
+        read: function(e, t, r, n, o) {
+            if (!e.tty || !e.tty.ops.get_char) throw new FS.ErrnoError(60);
+            for (var a = 0, i = 0; i < n; i++) {
+                var u;
+                try {
+                    u = e.tty.ops.get_char(e.tty)
+                } catch (e) {
+                    throw new FS.ErrnoError(29)
+                }
+                if (void 0 === u && 0 === a) throw new FS.ErrnoError(6);
+                if (null == u) break;
+                a++, t[r + i] = u
             }
-            var gamepad = navigator.getGamepads()[currentConnectedGamepad]
-            if (!gamepad) {
-                showMsg('Gamepad disconnected.')
-                currentConnectedGamepad = -1
-                return
+            return a && (e.node.timestamp = Date.now()), a
+        },
+        write: function(e, t, r, n, o) {
+            if (!e.tty || !e.tty.ops.put_char) throw new FS.ErrnoError(60);
+            try {
+                for (var a = 0; a < n; a++) e.tty.ops.put_char(e.tty, t[r + a])
+            } catch (e) {
+                throw new FS.ErrnoError(29)
             }
-            for (var i = 0; i < emuKeyState.length; i++) {
-                emuKeyState[i] = false
+            return n && (e.node.timestamp = Date.now()), a
+        }
+    },
+    default_tty_ops: {
+        get_char: function(e) {
+            if (!e.input.length) {
+                var t = null;
+                if (ENVIRONMENT_IS_NODE) {
+                    var r = Buffer.alloc(256),
+                        n = 0;
+                    try {
+                        n = fs.readSync(process.stdin.fd, r, 0, 256, -1)
+                    } catch (e) {
+                        if (!e.toString().includes("EOF")) throw e;
+                        n = 0
+                    }
+                    t = n > 0 ? r.slice(0, n).toString("utf-8") : null
+                } else "undefined" != typeof window && "function" == typeof window.prompt ? null !== (t = window.prompt("Input: ")) && (t += "\n") : "function" == typeof readline && null !== (t = readline()) && (t += "\n");
+                if (!t) return null;
+                e.input = intArrayFromString(t, !0)
             }
-            for (var k in gamePadKeyMap) {
-                if (gamepad.buttons[gamePadKeyMap[k]].pressed) {
-                    emuKeyState[keyNameToKeyId[k]] = true
+            return e.input.shift()
+        },
+        put_char: function(e, t) {
+            null === t || 10 === t ? (out(UTF8ArrayToString(e.output, 0)), e.output = []) : 0 != t && e.output.push(t)
+        },
+        flush: function(e) {
+            e.output && e.output.length > 0 && (out(UTF8ArrayToString(e.output, 0)), e.output = [])
+        }
+    },
+    default_tty1_ops: {
+        put_char: function(e, t) {
+            null === t || 10 === t ? (err(UTF8ArrayToString(e.output, 0)), e.output = []) : 0 != t && e.output.push(t)
+        },
+        flush: function(e) {
+            e.output && e.output.length > 0 && (err(UTF8ArrayToString(e.output, 0)), e.output = [])
+        }
+    }
+};
+
+function zeroMemory(e, t) {
+    HEAPU8.fill(0, e, e + t)
+}
+
+function alignMemory(e, t) {
+    return Math.ceil(e / t) * t
+}
+
+function mmapAlloc(e) {
+    abort()
+}
+Module.TTY = TTY, Module.zeroMemory = zeroMemory, Module.alignMemory = alignMemory, Module.mmapAlloc = mmapAlloc;
+var MEMFS = {
+    ops_table: null,
+    mount: function(e) {
+        return MEMFS.createNode(null, "/", 16895, 0)
+    },
+    createNode: function(e, t, r, n) {
+        if (FS.isBlkdev(r) || FS.isFIFO(r)) throw new FS.ErrnoError(63);
+        MEMFS.ops_table || (MEMFS.ops_table = {
+            dir: {
+                node: {
+                    getattr: MEMFS.node_ops.getattr,
+                    setattr: MEMFS.node_ops.setattr,
+                    lookup: MEMFS.node_ops.lookup,
+                    mknod: MEMFS.node_ops.mknod,
+                    rename: MEMFS.node_ops.rename,
+                    unlink: MEMFS.node_ops.unlink,
+                    rmdir: MEMFS.node_ops.rmdir,
+                    readdir: MEMFS.node_ops.readdir,
+                    symlink: MEMFS.node_ops.symlink
+                },
+                stream: {
+                    llseek: MEMFS.stream_ops.llseek
+                }
+            },
+            file: {
+                node: {
+                    getattr: MEMFS.node_ops.getattr,
+                    setattr: MEMFS.node_ops.setattr
+                },
+                stream: {
+                    llseek: MEMFS.stream_ops.llseek,
+                    read: MEMFS.stream_ops.read,
+                    write: MEMFS.stream_ops.write,
+                    allocate: MEMFS.stream_ops.allocate,
+                    mmap: MEMFS.stream_ops.mmap,
+                    msync: MEMFS.stream_ops.msync
+                }
+            },
+            link: {
+                node: {
+                    getattr: MEMFS.node_ops.getattr,
+                    setattr: MEMFS.node_ops.setattr,
+                    readlink: MEMFS.node_ops.readlink
+                },
+                stream: {}
+            },
+            chrdev: {
+                node: {
+                    getattr: MEMFS.node_ops.getattr,
+                    setattr: MEMFS.node_ops.setattr
+                },
+                stream: FS.chrdev_stream_ops
+            }
+        });
+        var o = FS.createNode(e, t, r, n);
+        return FS.isDir(o.mode) ? (o.node_ops = MEMFS.ops_table.dir.node, o.stream_ops = MEMFS.ops_table.dir.stream, o.contents = {}) : FS.isFile(o.mode) ? (o.node_ops = MEMFS.ops_table.file.node, o.stream_ops = MEMFS.ops_table.file.stream, o.usedBytes = 0, o.contents = null) : FS.isLink(o.mode) ? (o.node_ops = MEMFS.ops_table.link.node, o.stream_ops = MEMFS.ops_table.link.stream) : FS.isChrdev(o.mode) && (o.node_ops = MEMFS.ops_table.chrdev.node, o.stream_ops = MEMFS.ops_table.chrdev.stream), o.timestamp = Date.now(), e && (e.contents[t] = o, e.timestamp = o.timestamp), o
+    },
+    getFileDataAsTypedArray: function(e) {
+        return e.contents ? e.contents.subarray ? e.contents.subarray(0, e.usedBytes) : new Uint8Array(e.contents) : new Uint8Array(0)
+    },
+    expandFileStorage: function(e, t) {
+        var r = e.contents ? e.contents.length : 0;
+        if (!(r >= t)) {
+            t = Math.max(t, r * (r < 1048576 ? 2 : 1.125) >>> 0), 0 != r && (t = Math.max(t, 256));
+            var n = e.contents;
+            e.contents = new Uint8Array(t), e.usedBytes > 0 && e.contents.set(n.subarray(0, e.usedBytes), 0)
+        }
+    },
+    resizeFileStorage: function(e, t) {
+        if (e.usedBytes != t)
+            if (0 == t) e.contents = null, e.usedBytes = 0;
+            else {
+                var r = e.contents;
+                e.contents = new Uint8Array(t), r && e.contents.set(r.subarray(0, Math.min(t, e.usedBytes))), e.usedBytes = t
+            }
+    },
+    node_ops: {
+        getattr: function(e) {
+            var t = {};
+            return t.dev = FS.isChrdev(e.mode) ? e.id : 1, t.ino = e.id, t.mode = e.mode, t.nlink = 1, t.uid = 0, t.gid = 0, t.rdev = e.rdev, FS.isDir(e.mode) ? t.size = 4096 : FS.isFile(e.mode) ? t.size = e.usedBytes : FS.isLink(e.mode) ? t.size = e.link.length : t.size = 0, t.atime = new Date(e.timestamp), t.mtime = new Date(e.timestamp), t.ctime = new Date(e.timestamp), t.blksize = 4096, t.blocks = Math.ceil(t.size / t.blksize), t
+        },
+        setattr: function(e, t) {
+            void 0 !== t.mode && (e.mode = t.mode), void 0 !== t.timestamp && (e.timestamp = t.timestamp), void 0 !== t.size && MEMFS.resizeFileStorage(e, t.size)
+        },
+        lookup: function(e, t) {
+            throw FS.genericErrors[44]
+        },
+        mknod: function(e, t, r, n) {
+            return MEMFS.createNode(e, t, r, n)
+        },
+        rename: function(e, t, r) {
+            if (FS.isDir(e.mode)) {
+                var n;
+                try {
+                    n = FS.lookupNode(t, r)
+                } catch (e) {}
+                if (n)
+                    for (var o in n.contents) throw new FS.ErrnoError(55)
+            }
+            delete e.parent.contents[e.name], e.parent.timestamp = Date.now(), e.name = r, t.contents[r] = e, t.timestamp = e.parent.timestamp, e.parent = t
+        },
+        unlink: function(e, t) {
+            delete e.contents[t], e.timestamp = Date.now()
+        },
+        rmdir: function(e, t) {
+            var r = FS.lookupNode(e, t);
+            for (var n in r.contents) throw new FS.ErrnoError(55);
+            delete e.contents[t], e.timestamp = Date.now()
+        },
+        readdir: function(e) {
+            var t = [".", ".."];
+            for (var r in e.contents) e.contents.hasOwnProperty(r) && t.push(r);
+            return t
+        },
+        symlink: function(e, t, r) {
+            var n = MEMFS.createNode(e, t, 41471, 0);
+            return n.link = r, n
+        },
+        readlink: function(e) {
+            if (!FS.isLink(e.mode)) throw new FS.ErrnoError(28);
+            return e.link
+        }
+    },
+    stream_ops: {
+        read: function(e, t, r, n, o) {
+            var a = e.node.contents;
+            if (o >= e.node.usedBytes) return 0;
+            var i = Math.min(e.node.usedBytes - o, n);
+            if (i > 8 && a.subarray) t.set(a.subarray(o, o + i), r);
+            else
+                for (var u = 0; u < i; u++) t[r + u] = a[o + u];
+            return i
+        },
+        write: function(e, t, r, n, o, a) {
+            if (!n) return 0;
+            var i = e.node;
+            if (i.timestamp = Date.now(), t.subarray && (!i.contents || i.contents.subarray)) {
+                if (a) return i.contents = t.subarray(r, r + n), i.usedBytes = n, n;
+                if (0 === i.usedBytes && 0 === o) return i.contents = t.slice(r, r + n), i.usedBytes = n, n;
+                if (o + n <= i.usedBytes) return i.contents.set(t.subarray(r, r + n), o), n
+            }
+            if (MEMFS.expandFileStorage(i, o + n), i.contents.subarray && t.subarray) i.contents.set(t.subarray(r, r + n), o);
+            else
+                for (var u = 0; u < n; u++) i.contents[o + u] = t[r + u];
+            return i.usedBytes = Math.max(i.usedBytes, o + n), n
+        },
+        llseek: function(e, t, r) {
+            var n = t;
+            if (1 === r ? n += e.position : 2 === r && FS.isFile(e.node.mode) && (n += e.node.usedBytes), n < 0) throw new FS.ErrnoError(28);
+            return n
+        },
+        allocate: function(e, t, r) {
+            MEMFS.expandFileStorage(e.node, t + r), e.node.usedBytes = Math.max(e.node.usedBytes, t + r)
+        },
+        mmap: function(e, t, r, n, o, a) {
+            if (0 !== t) throw new FS.ErrnoError(28);
+            if (!FS.isFile(e.node.mode)) throw new FS.ErrnoError(43);
+            var i, u, s = e.node.contents;
+            if (2 & a || s.buffer !== buffer) {
+                if ((n > 0 || n + r < s.length) && (s = s.subarray ? s.subarray(n, n + r) : Array.prototype.slice.call(s, n, n + r)), u = !0, !(i = mmapAlloc(r))) throw new FS.ErrnoError(48);
+                HEAP8.set(s, i)
+            } else u = !1, i = s.byteOffset;
+            return {
+                ptr: i,
+                allocated: u
+            }
+        },
+        msync: function(e, t, r, n, o) {
+            if (!FS.isFile(e.node.mode)) throw new FS.ErrnoError(43);
+            if (2 & o) return 0;
+            MEMFS.stream_ops.write(e, t, 0, n, r, !1);
+            return 0
+        }
+    }
+};
+
+function asyncLoad(e, t, r, n) {
+    var o = n ? "" : getUniqueRunDependency("al " + e);
+    readAsync(e, function(r) {
+        assert(r, 'Loading data file "' + e + '" failed (no arrayBuffer).'), t(new Uint8Array(r)), o && removeRunDependency(o)
+    }, function(t) {
+        if (!r) throw 'Loading data file "' + e + '" failed.';
+        r()
+    }), o && addRunDependency(o)
+}
+Module.MEMFS = MEMFS, Module.asyncLoad = asyncLoad;
+var FS = {
+    root: null,
+    mounts: [],
+    devices: {},
+    streams: [],
+    nextInode: 1,
+    nameTable: null,
+    currentPath: "/",
+    initialized: !1,
+    ignorePermissions: !0,
+    ErrnoError: null,
+    genericErrors: {},
+    filesystems: null,
+    syncFSRequests: 0,
+    lookupPath: (e, t = {}) => {
+        if (!(e = PATH_FS.resolve(FS.cwd(), e))) return {
+            path: "",
+            node: null
+        };
+        if ((t = Object.assign({
+                follow_mount: !0,
+                recurse_count: 0
+            }, t)).recurse_count > 8) throw new FS.ErrnoError(32);
+        for (var r = PATH.normalizeArray(e.split("/").filter(e => !!e), !1), n = FS.root, o = "/", a = 0; a < r.length; a++) {
+            var i = a === r.length - 1;
+            if (i && t.parent) break;
+            if (n = FS.lookupNode(n, r[a]), o = PATH.join2(o, r[a]), FS.isMountpoint(n) && (!i || i && t.follow_mount) && (n = n.mounted.root), !i || t.follow)
+                for (var u = 0; FS.isLink(n.mode);) {
+                    var s = FS.readlink(o);
+                    if (o = PATH_FS.resolve(PATH.dirname(o), s), n = FS.lookupPath(o, {
+                            recurse_count: t.recurse_count + 1
+                        }).node, u++ > 40) throw new FS.ErrnoError(32)
+                }
+        }
+        return {
+            path: o,
+            node: n
+        }
+    },
+    getPath: e => {
+        for (var t;;) {
+            if (FS.isRoot(e)) {
+                var r = e.mount.mountpoint;
+                return t ? "/" !== r[r.length - 1] ? r + "/" + t : r + t : r
+            }
+            t = t ? e.name + "/" + t : e.name, e = e.parent
+        }
+    },
+    hashName: (e, t) => {
+        for (var r = 0, n = 0; n < t.length; n++) r = (r << 5) - r + t.charCodeAt(n) | 0;
+        return (e + r >>> 0) % FS.nameTable.length
+    },
+    hashAddNode: e => {
+        var t = FS.hashName(e.parent.id, e.name);
+        e.name_next = FS.nameTable[t], FS.nameTable[t] = e
+    },
+    hashRemoveNode: e => {
+        var t = FS.hashName(e.parent.id, e.name);
+        if (FS.nameTable[t] === e) FS.nameTable[t] = e.name_next;
+        else
+            for (var r = FS.nameTable[t]; r;) {
+                if (r.name_next === e) {
+                    r.name_next = e.name_next;
+                    break
+                }
+                r = r.name_next
+            }
+    },
+    lookupNode: (e, t) => {
+        var r = FS.mayLookup(e);
+        if (r) throw new FS.ErrnoError(r, e);
+        for (var n = FS.hashName(e.id, t), o = FS.nameTable[n]; o; o = o.name_next) {
+            var a = o.name;
+            if (o.parent.id === e.id && a === t) return o
+        }
+        return FS.lookup(e, t)
+    },
+    createNode: (e, t, r, n) => {
+        var o = new FS.FSNode(e, t, r, n);
+        return FS.hashAddNode(o), o
+    },
+    destroyNode: e => {
+        FS.hashRemoveNode(e)
+    },
+    isRoot: e => e === e.parent,
+    isMountpoint: e => !!e.mounted,
+    isFile: e => 32768 == (61440 & e),
+    isDir: e => 16384 == (61440 & e),
+    isLink: e => 40960 == (61440 & e),
+    isChrdev: e => 8192 == (61440 & e),
+    isBlkdev: e => 24576 == (61440 & e),
+    isFIFO: e => 4096 == (61440 & e),
+    isSocket: e => 49152 == (49152 & e),
+    flagModes: {
+        r: 0,
+        "r+": 2,
+        w: 577,
+        "w+": 578,
+        a: 1089,
+        "a+": 1090
+    },
+    modeStringToFlags: e => {
+        var t = FS.flagModes[e];
+        if (void 0 === t) throw new Error("Unknown file open mode: " + e);
+        return t
+    },
+    flagsToPermissionString: e => {
+        var t = ["r", "w", "rw"][3 & e];
+        return 512 & e && (t += "w"), t
+    },
+    nodePermissions: (e, t) => FS.ignorePermissions ? 0 : (!t.includes("r") || 292 & e.mode) && (!t.includes("w") || 146 & e.mode) && (!t.includes("x") || 73 & e.mode) ? 0 : 2,
+    mayLookup: e => {
+        var t = FS.nodePermissions(e, "x");
+        return t || (e.node_ops.lookup ? 0 : 2)
+    },
+    mayCreate: (e, t) => {
+        try {
+            FS.lookupNode(e, t);
+            return 20
+        } catch (e) {}
+        return FS.nodePermissions(e, "wx")
+    },
+    mayDelete: (e, t, r) => {
+        var n;
+        try {
+            n = FS.lookupNode(e, t)
+        } catch (e) {
+            return e.errno
+        }
+        var o = FS.nodePermissions(e, "wx");
+        if (o) return o;
+        if (r) {
+            if (!FS.isDir(n.mode)) return 54;
+            if (FS.isRoot(n) || FS.getPath(n) === FS.cwd()) return 10
+        } else if (FS.isDir(n.mode)) return 31;
+        return 0
+    },
+    mayOpen: (e, t) => e ? FS.isLink(e.mode) ? 32 : FS.isDir(e.mode) && ("r" !== FS.flagsToPermissionString(t) || 512 & t) ? 31 : FS.nodePermissions(e, FS.flagsToPermissionString(t)) : 44,
+    MAX_OPEN_FDS: 4096,
+    nextfd: (e = 0, t = FS.MAX_OPEN_FDS) => {
+        for (var r = e; r <= t; r++)
+            if (!FS.streams[r]) return r;
+        throw new FS.ErrnoError(33)
+    },
+    getStream: e => FS.streams[e],
+    createStream: (e, t, r) => {
+        FS.FSStream || (FS.FSStream = function() {}, FS.FSStream.prototype = {
+            object: {
+                get: function() {
+                    return this.node
+                },
+                set: function(e) {
+                    this.node = e
+                }
+            },
+            isRead: {
+                get: function() {
+                    return 1 != (2097155 & this.flags)
+                }
+            },
+            isWrite: {
+                get: function() {
+                    return 0 != (2097155 & this.flags)
+                }
+            },
+            isAppend: {
+                get: function() {
+                    return 1024 & this.flags
                 }
             }
-            if (gamepad.axes[0] < -0.5) {
-                emuKeyState[keyNameToKeyId['left']] = true
-            }
-            if (gamepad.axes[0] > 0.5) {
-                emuKeyState[keyNameToKeyId['right']] = true
-            }
-            if (gamepad.axes[1] < -0.5) {
-                emuKeyState[keyNameToKeyId['up']] = true
-            }
-            if (gamepad.axes[1] > 0.5) {
-                emuKeyState[keyNameToKeyId['down']] = true
-            }
+        }), e = Object.assign(new FS.FSStream, e);
+        var n = FS.nextfd(t, r);
+        return e.fd = n, FS.streams[n] = e, e
+    },
+    closeStream: e => {
+        FS.streams[e] = null
+    },
+    chrdev_stream_ops: {
+        open: e => {
+            var t = FS.getDevice(e.node.rdev);
+            e.stream_ops = t.stream_ops, e.stream_ops.open && e.stream_ops.open(e)
+        },
+        llseek: () => {
+            throw new FS.ErrnoError(70)
+        }
+    },
+    major: e => e >> 8,
+    minor: e => 255 & e,
+    makedev: (e, t) => e << 8 | t,
+    registerDevice: (e, t) => {
+        FS.devices[e] = {
+            stream_ops: t
+        }
+    },
+    getDevice: e => FS.devices[e],
+    getMounts: e => {
+        for (var t = [], r = [e]; r.length;) {
+            var n = r.pop();
+            t.push(n), r.push.apply(r, n.mounts)
+        }
+        return t
+    },
+    syncfs: (e, t) => {
+        "function" == typeof e && (t = e, e = !1), FS.syncFSRequests++, FS.syncFSRequests > 1 && err("warning: " + FS.syncFSRequests + " FS.syncfs operations in flight at once, probably just doing extra work");
+        var r = FS.getMounts(FS.root.mount),
+            n = 0;
+
+        function o(e) {
+            return FS.syncFSRequests--, t(e)
         }
 
-        function whatsNew() {
-            alert(`
-1. Added setting option to hide the virtual keyboard.
-`)
+        function a(e) {
+            if (e) return a.errored ? void 0 : (a.errored = !0, o(e));
+            ++n >= r.length && o(null)
         }
-      } else {
-        console.log("No Desmond player found!")
-      }
+        r.forEach(t => {
+            if (!t.type.syncfs) return a(null);
+            t.type.syncfs(t, e, a)
+        })
+    },
+    mount: (e, t, r) => {
+        var n, o = "/" === r,
+            a = !r;
+        if (o && FS.root) throw new FS.ErrnoError(10);
+        if (!o && !a) {
+            var i = FS.lookupPath(r, {
+                follow_mount: !1
+            });
+            if (r = i.path, n = i.node, FS.isMountpoint(n)) throw new FS.ErrnoError(10);
+            if (!FS.isDir(n.mode)) throw new FS.ErrnoError(54)
+        }
+        var u = {
+                type: e,
+                opts: t,
+                mountpoint: r,
+                mounts: []
+            },
+            s = e.mount(u);
+        return s.mount = u, u.root = s, o ? FS.root = s : n && (n.mounted = u, n.mount && n.mount.mounts.push(u)), s
+    },
+    unmount: e => {
+        var t = FS.lookupPath(e, {
+            follow_mount: !1
+        });
+        if (!FS.isMountpoint(t.node)) throw new FS.ErrnoError(28);
+        var r = t.node,
+            n = r.mounted,
+            o = FS.getMounts(n);
+        Object.keys(FS.nameTable).forEach(e => {
+            for (var t = FS.nameTable[e]; t;) {
+                var r = t.name_next;
+                o.includes(t.mount) && FS.destroyNode(t), t = r
+            }
+        }), r.mounted = null;
+        var a = r.mount.mounts.indexOf(n);
+        r.mount.mounts.splice(a, 1)
+    },
+    lookup: (e, t) => e.node_ops.lookup(e, t),
+    mknod: (e, t, r) => {
+        var n = FS.lookupPath(e, {
+                parent: !0
+            }).node,
+            o = PATH.basename(e);
+        if (!o || "." === o || ".." === o) throw new FS.ErrnoError(28);
+        var a = FS.mayCreate(n, o);
+        if (a) throw new FS.ErrnoError(a);
+        if (!n.node_ops.mknod) throw new FS.ErrnoError(63);
+        return n.node_ops.mknod(n, o, t, r)
+    },
+    create: (e, t) => (t = void 0 !== t ? t : 438, t &= 4095, t |= 32768, FS.mknod(e, t, 0)),
+    mkdir: (e, t) => (t = void 0 !== t ? t : 511, t &= 1023, t |= 16384, FS.mknod(e, t, 0)),
+    mkdirTree: (e, t) => {
+        for (var r = e.split("/"), n = "", o = 0; o < r.length; ++o)
+            if (r[o]) {
+                n += "/" + r[o];
+                try {
+                    FS.mkdir(n, t)
+                } catch (e) {
+                    if (20 != e.errno) throw e
+                }
+            }
+    },
+    mkdev: (e, t, r) => (void 0 === r && (r = t, t = 438), t |= 8192, FS.mknod(e, t, r)),
+    symlink: (e, t) => {
+        if (!PATH_FS.resolve(e)) throw new FS.ErrnoError(44);
+        var r = FS.lookupPath(t, {
+            parent: !0
+        }).node;
+        if (!r) throw new FS.ErrnoError(44);
+        var n = PATH.basename(t),
+            o = FS.mayCreate(r, n);
+        if (o) throw new FS.ErrnoError(o);
+        if (!r.node_ops.symlink) throw new FS.ErrnoError(63);
+        return r.node_ops.symlink(r, n, e)
+    },
+    rename: (e, t) => {
+        var r, n, o = PATH.dirname(e),
+            a = PATH.dirname(t),
+            i = PATH.basename(e),
+            u = PATH.basename(t);
+        if (r = FS.lookupPath(e, {
+                parent: !0
+            }).node, n = FS.lookupPath(t, {
+                parent: !0
+            }).node, !r || !n) throw new FS.ErrnoError(44);
+        if (r.mount !== n.mount) throw new FS.ErrnoError(75);
+        var s, l = FS.lookupNode(r, i),
+            c = PATH_FS.relative(e, a);
+        if ("." !== c.charAt(0)) throw new FS.ErrnoError(28);
+        if ("." !== (c = PATH_FS.relative(t, o)).charAt(0)) throw new FS.ErrnoError(55);
+        try {
+            s = FS.lookupNode(n, u)
+        } catch (e) {}
+        if (l !== s) {
+            var d = FS.isDir(l.mode),
+                f = FS.mayDelete(r, i, d);
+            if (f) throw new FS.ErrnoError(f);
+            if (f = s ? FS.mayDelete(n, u, d) : FS.mayCreate(n, u)) throw new FS.ErrnoError(f);
+            if (!r.node_ops.rename) throw new FS.ErrnoError(63);
+            if (FS.isMountpoint(l) || s && FS.isMountpoint(s)) throw new FS.ErrnoError(10);
+            if (n !== r && (f = FS.nodePermissions(r, "w"))) throw new FS.ErrnoError(f);
+            FS.hashRemoveNode(l);
+            try {
+                r.node_ops.rename(l, n, u)
+            } catch (e) {
+                throw e
+            } finally {
+                FS.hashAddNode(l)
+            }
+        }
+    },
+    rmdir: e => {
+        var t = FS.lookupPath(e, {
+                parent: !0
+            }).node,
+            r = PATH.basename(e),
+            n = FS.lookupNode(t, r),
+            o = FS.mayDelete(t, r, !0);
+        if (o) throw new FS.ErrnoError(o);
+        if (!t.node_ops.rmdir) throw new FS.ErrnoError(63);
+        if (FS.isMountpoint(n)) throw new FS.ErrnoError(10);
+        t.node_ops.rmdir(t, r), FS.destroyNode(n)
+    },
+    readdir: e => {
+        var t = FS.lookupPath(e, {
+            follow: !0
+        }).node;
+        if (!t.node_ops.readdir) throw new FS.ErrnoError(54);
+        return t.node_ops.readdir(t)
+    },
+    unlink: e => {
+        var t = FS.lookupPath(e, {
+            parent: !0
+        }).node;
+        if (!t) throw new FS.ErrnoError(44);
+        var r = PATH.basename(e),
+            n = FS.lookupNode(t, r),
+            o = FS.mayDelete(t, r, !1);
+        if (o) throw new FS.ErrnoError(o);
+        if (!t.node_ops.unlink) throw new FS.ErrnoError(63);
+        if (FS.isMountpoint(n)) throw new FS.ErrnoError(10);
+        t.node_ops.unlink(t, r), FS.destroyNode(n)
+    },
+    readlink: e => {
+        var t = FS.lookupPath(e).node;
+        if (!t) throw new FS.ErrnoError(44);
+        if (!t.node_ops.readlink) throw new FS.ErrnoError(28);
+        return PATH_FS.resolve(FS.getPath(t.parent), t.node_ops.readlink(t))
+    },
+    stat: (e, t) => {
+        var r = FS.lookupPath(e, {
+            follow: !t
+        }).node;
+        if (!r) throw new FS.ErrnoError(44);
+        if (!r.node_ops.getattr) throw new FS.ErrnoError(63);
+        return r.node_ops.getattr(r)
+    },
+    lstat: e => FS.stat(e, !0),
+    chmod: (e, t, r) => {
+        var n;
+        "string" == typeof e ? n = FS.lookupPath(e, {
+            follow: !r
+        }).node : n = e;
+        if (!n.node_ops.setattr) throw new FS.ErrnoError(63);
+        n.node_ops.setattr(n, {
+            mode: 4095 & t | -4096 & n.mode,
+            timestamp: Date.now()
+        })
+    },
+    lchmod: (e, t) => {
+        FS.chmod(e, t, !0)
+    },
+    fchmod: (e, t) => {
+        var r = FS.getStream(e);
+        if (!r) throw new FS.ErrnoError(8);
+        FS.chmod(r.node, t)
+    },
+    chown: (e, t, r, n) => {
+        var o;
+        "string" == typeof e ? o = FS.lookupPath(e, {
+            follow: !n
+        }).node : o = e;
+        if (!o.node_ops.setattr) throw new FS.ErrnoError(63);
+        o.node_ops.setattr(o, {
+            timestamp: Date.now()
+        })
+    },
+    lchown: (e, t, r) => {
+        FS.chown(e, t, r, !0)
+    },
+    fchown: (e, t, r) => {
+        var n = FS.getStream(e);
+        if (!n) throw new FS.ErrnoError(8);
+        FS.chown(n.node, t, r)
+    },
+    truncate: (e, t) => {
+        if (t < 0) throw new FS.ErrnoError(28);
+        var r;
+        "string" == typeof e ? r = FS.lookupPath(e, {
+            follow: !0
+        }).node : r = e;
+        if (!r.node_ops.setattr) throw new FS.ErrnoError(63);
+        if (FS.isDir(r.mode)) throw new FS.ErrnoError(31);
+        if (!FS.isFile(r.mode)) throw new FS.ErrnoError(28);
+        var n = FS.nodePermissions(r, "w");
+        if (n) throw new FS.ErrnoError(n);
+        r.node_ops.setattr(r, {
+            size: t,
+            timestamp: Date.now()
+        })
+    },
+    ftruncate: (e, t) => {
+        var r = FS.getStream(e);
+        if (!r) throw new FS.ErrnoError(8);
+        if (0 == (2097155 & r.flags)) throw new FS.ErrnoError(28);
+        FS.truncate(r.node, t)
+    },
+    utime: (e, t, r) => {
+        var n = FS.lookupPath(e, {
+            follow: !0
+        }).node;
+        n.node_ops.setattr(n, {
+            timestamp: Math.max(t, r)
+        })
+    },
+    open: (e, t, r, n, o) => {
+        if ("" === e) throw new FS.ErrnoError(44);
+        var a;
+        if (r = void 0 === r ? 438 : r, r = 64 & (t = "string" == typeof t ? FS.modeStringToFlags(t) : t) ? 4095 & r | 32768 : 0, "object" == typeof e) a = e;
+        else {
+            e = PATH.normalize(e);
+            try {
+                a = FS.lookupPath(e, {
+                    follow: !(131072 & t)
+                }).node
+            } catch (e) {}
+        }
+        var i = !1;
+        if (64 & t)
+            if (a) {
+                if (128 & t) throw new FS.ErrnoError(20)
+            } else a = FS.mknod(e, r, 0), i = !0;
+        if (!a) throw new FS.ErrnoError(44);
+        if (FS.isChrdev(a.mode) && (t &= -513), 65536 & t && !FS.isDir(a.mode)) throw new FS.ErrnoError(54);
+        if (!i) {
+            var u = FS.mayOpen(a, t);
+            if (u) throw new FS.ErrnoError(u)
+        }
+        512 & t && FS.truncate(a, 0), t &= -131713;
+        var s = FS.createStream({
+            node: a,
+            path: FS.getPath(a),
+            flags: t,
+            seekable: !0,
+            position: 0,
+            stream_ops: a.stream_ops,
+            ungotten: [],
+            error: !1
+        }, n, o);
+        return s.stream_ops.open && s.stream_ops.open(s), !Module.logReadFiles || 1 & t || (FS.readFiles || (FS.readFiles = {}), e in FS.readFiles || (FS.readFiles[e] = 1)), s
+    },
+    close: e => {
+        if (FS.isClosed(e)) throw new FS.ErrnoError(8);
+        e.getdents && (e.getdents = null);
+        try {
+            e.stream_ops.close && e.stream_ops.close(e)
+        } catch (e) {
+            throw e
+        } finally {
+            FS.closeStream(e.fd)
+        }
+        e.fd = null
+    },
+    isClosed: e => null === e.fd,
+    llseek: (e, t, r) => {
+        if (FS.isClosed(e)) throw new FS.ErrnoError(8);
+        if (!e.seekable || !e.stream_ops.llseek) throw new FS.ErrnoError(70);
+        if (0 != r && 1 != r && 2 != r) throw new FS.ErrnoError(28);
+        return e.position = e.stream_ops.llseek(e, t, r), e.ungotten = [], e.position
+    },
+    read: (e, t, r, n, o) => {
+        if (n < 0 || o < 0) throw new FS.ErrnoError(28);
+        if (FS.isClosed(e)) throw new FS.ErrnoError(8);
+        if (1 == (2097155 & e.flags)) throw new FS.ErrnoError(8);
+        if (FS.isDir(e.node.mode)) throw new FS.ErrnoError(31);
+        if (!e.stream_ops.read) throw new FS.ErrnoError(28);
+        var a = void 0 !== o;
+        if (a) {
+            if (!e.seekable) throw new FS.ErrnoError(70)
+        } else o = e.position;
+        var i = e.stream_ops.read(e, t, r, n, o);
+        return a || (e.position += i), i
+    },
+    write: (e, t, r, n, o, a) => {
+        if (n < 0 || o < 0) throw new FS.ErrnoError(28);
+        if (FS.isClosed(e)) throw new FS.ErrnoError(8);
+        if (0 == (2097155 & e.flags)) throw new FS.ErrnoError(8);
+        if (FS.isDir(e.node.mode)) throw new FS.ErrnoError(31);
+        if (!e.stream_ops.write) throw new FS.ErrnoError(28);
+        e.seekable && 1024 & e.flags && FS.llseek(e, 0, 2);
+        var i = void 0 !== o;
+        if (i) {
+            if (!e.seekable) throw new FS.ErrnoError(70)
+        } else o = e.position;
+        var u = e.stream_ops.write(e, t, r, n, o, a);
+        return i || (e.position += u), u
+    },
+    allocate: (e, t, r) => {
+        if (FS.isClosed(e)) throw new FS.ErrnoError(8);
+        if (t < 0 || r <= 0) throw new FS.ErrnoError(28);
+        if (0 == (2097155 & e.flags)) throw new FS.ErrnoError(8);
+        if (!FS.isFile(e.node.mode) && !FS.isDir(e.node.mode)) throw new FS.ErrnoError(43);
+        if (!e.stream_ops.allocate) throw new FS.ErrnoError(138);
+        e.stream_ops.allocate(e, t, r)
+    },
+    mmap: (e, t, r, n, o, a) => {
+        if (0 != (2 & o) && 0 == (2 & a) && 2 != (2097155 & e.flags)) throw new FS.ErrnoError(2);
+        if (1 == (2097155 & e.flags)) throw new FS.ErrnoError(2);
+        if (!e.stream_ops.mmap) throw new FS.ErrnoError(43);
+        return e.stream_ops.mmap(e, t, r, n, o, a)
+    },
+    msync: (e, t, r, n, o) => e && e.stream_ops.msync ? e.stream_ops.msync(e, t, r, n, o) : 0,
+    munmap: e => 0,
+    ioctl: (e, t, r) => {
+        if (!e.stream_ops.ioctl) throw new FS.ErrnoError(59);
+        return e.stream_ops.ioctl(e, t, r)
+    },
+    readFile: (e, t = {}) => {
+        if (t.flags = t.flags || 0, t.encoding = t.encoding || "binary", "utf8" !== t.encoding && "binary" !== t.encoding) throw new Error('Invalid encoding type "' + t.encoding + '"');
+        var r, n = FS.open(e, t.flags),
+            o = FS.stat(e).size,
+            a = new Uint8Array(o);
+        return FS.read(n, a, 0, o, 0), "utf8" === t.encoding ? r = UTF8ArrayToString(a, 0) : "binary" === t.encoding && (r = a), FS.close(n), r
+    },
+    writeFile: (e, t, r = {}) => {
+        r.flags = r.flags || 577;
+        var n = FS.open(e, r.flags, r.mode);
+        if ("string" == typeof t) {
+            var o = new Uint8Array(lengthBytesUTF8(t) + 1),
+                a = stringToUTF8Array(t, o, 0, o.length);
+            FS.write(n, o, 0, a, void 0, r.canOwn)
+        } else {
+            if (!ArrayBuffer.isView(t)) throw new Error("Unsupported data type");
+            FS.write(n, t, 0, t.byteLength, void 0, r.canOwn)
+        }
+        FS.close(n)
+    },
+    cwd: () => FS.currentPath,
+    chdir: e => {
+        var t = FS.lookupPath(e, {
+            follow: !0
+        });
+        if (null === t.node) throw new FS.ErrnoError(44);
+        if (!FS.isDir(t.node.mode)) throw new FS.ErrnoError(54);
+        var r = FS.nodePermissions(t.node, "x");
+        if (r) throw new FS.ErrnoError(r);
+        FS.currentPath = t.path
+    },
+    createDefaultDirectories: () => {
+        FS.mkdir("/tmp"), FS.mkdir("/home"), FS.mkdir("/home/web_user")
+    },
+    createDefaultDevices: () => {
+        FS.mkdir("/dev"), FS.registerDevice(FS.makedev(1, 3), {
+            read: () => 0,
+            write: (e, t, r, n, o) => n
+        }), FS.mkdev("/dev/null", FS.makedev(1, 3)), TTY.register(FS.makedev(5, 0), TTY.default_tty_ops), TTY.register(FS.makedev(6, 0), TTY.default_tty1_ops), FS.mkdev("/dev/tty", FS.makedev(5, 0)), FS.mkdev("/dev/tty1", FS.makedev(6, 0));
+        var e = getRandomDevice();
+        FS.createDevice("/dev", "random", e), FS.createDevice("/dev", "urandom", e), FS.mkdir("/dev/shm"), FS.mkdir("/dev/shm/tmp")
+    },
+    createSpecialDirectories: () => {
+        FS.mkdir("/proc");
+        var e = FS.mkdir("/proc/self");
+        FS.mkdir("/proc/self/fd"), FS.mount({
+            mount: () => {
+                var t = FS.createNode(e, "fd", 16895, 73);
+                return t.node_ops = {
+                    lookup: (e, t) => {
+                        var r = +t,
+                            n = FS.getStream(r);
+                        if (!n) throw new FS.ErrnoError(8);
+                        var o = {
+                            parent: null,
+                            mount: {
+                                mountpoint: "fake"
+                            },
+                            node_ops: {
+                                readlink: () => n.path
+                            }
+                        };
+                        return o.parent = o, o
+                    }
+                }, t
+            }
+        }, {}, "/proc/self/fd")
+    },
+    createStandardStreams: () => {
+        Module.stdin ? FS.createDevice("/dev", "stdin", Module.stdin) : FS.symlink("/dev/tty", "/dev/stdin"), Module.stdout ? FS.createDevice("/dev", "stdout", null, Module.stdout) : FS.symlink("/dev/tty", "/dev/stdout"), Module.stderr ? FS.createDevice("/dev", "stderr", null, Module.stderr) : FS.symlink("/dev/tty1", "/dev/stderr");
+        FS.open("/dev/stdin", 0), FS.open("/dev/stdout", 1), FS.open("/dev/stderr", 1)
+    },
+    ensureErrnoError: () => {
+        FS.ErrnoError || (FS.ErrnoError = function(e, t) {
+            this.node = t, this.setErrno = function(e) {
+                this.errno = e
+            }, this.setErrno(e), this.message = "FS error"
+        }, FS.ErrnoError.prototype = new Error, FS.ErrnoError.prototype.constructor = FS.ErrnoError, [44].forEach(e => {
+            FS.genericErrors[e] = new FS.ErrnoError(e), FS.genericErrors[e].stack = "<generic error, no stack>"
+        }))
+    },
+    staticInit: () => {
+        FS.ensureErrnoError(), FS.nameTable = new Array(4096), FS.mount(MEMFS, {}, "/"), FS.createDefaultDirectories(), FS.createDefaultDevices(), FS.createSpecialDirectories(), FS.filesystems = {
+            MEMFS: MEMFS
+        }
+    },
+    init: (e, t, r) => {
+        FS.init.initialized = !0, FS.ensureErrnoError(), Module.stdin = e || Module.stdin, Module.stdout = t || Module.stdout, Module.stderr = r || Module.stderr, FS.createStandardStreams()
+    },
+    quit: () => {
+        FS.init.initialized = !1;
+        for (var e = 0; e < FS.streams.length; e++) {
+            var t = FS.streams[e];
+            t && FS.close(t)
+        }
+    },
+    getMode: (e, t) => {
+        var r = 0;
+        return e && (r |= 365), t && (r |= 146), r
+    },
+    findObject: (e, t) => {
+        var r = FS.analyzePath(e, t);
+        return r.exists ? r.object : null
+    },
+    analyzePath: (e, t) => {
+        try {
+            e = (n = FS.lookupPath(e, {
+                follow: !t
+            })).path
+        } catch (e) {}
+        var r = {
+            isRoot: !1,
+            exists: !1,
+            error: 0,
+            name: null,
+            path: null,
+            object: null,
+            parentExists: !1,
+            parentPath: null,
+            parentObject: null
+        };
+        try {
+            var n = FS.lookupPath(e, {
+                parent: !0
+            });
+            r.parentExists = !0, r.parentPath = n.path, r.parentObject = n.node, r.name = PATH.basename(e), n = FS.lookupPath(e, {
+                follow: !t
+            }), r.exists = !0, r.path = n.path, r.object = n.node, r.name = n.node.name, r.isRoot = "/" === n.path
+        } catch (e) {
+            r.error = e.errno
+        }
+        return r
+    },
+    createPath: (e, t, r, n) => {
+        e = "string" == typeof e ? e : FS.getPath(e);
+        for (var o = t.split("/").reverse(); o.length;) {
+            var a = o.pop();
+            if (a) {
+                var i = PATH.join2(e, a);
+                try {
+                    FS.mkdir(i)
+                } catch (e) {}
+                e = i
+            }
+        }
+        return i
+    },
+    createFile: (e, t, r, n, o) => {
+        var a = PATH.join2("string" == typeof e ? e : FS.getPath(e), t),
+            i = FS.getMode(n, o);
+        return FS.create(a, i)
+    },
+    createDataFile: (e, t, r, n, o, a) => {
+        var i = t;
+        e && (e = "string" == typeof e ? e : FS.getPath(e), i = t ? PATH.join2(e, t) : e);
+        var u = FS.getMode(n, o),
+            s = FS.create(i, u);
+        if (r) {
+            if ("string" == typeof r) {
+                for (var l = new Array(r.length), c = 0, d = r.length; c < d; ++c) l[c] = r.charCodeAt(c);
+                r = l
+            }
+            FS.chmod(s, 146 | u);
+            var f = FS.open(s, 577);
+            FS.write(f, r, 0, r.length, 0, a), FS.close(f), FS.chmod(s, u)
+        }
+        return s
+    },
+    createDevice: (e, t, r, n) => {
+        var o = PATH.join2("string" == typeof e ? e : FS.getPath(e), t),
+            a = FS.getMode(!!r, !!n);
+        FS.createDevice.major || (FS.createDevice.major = 64);
+        var i = FS.makedev(FS.createDevice.major++, 0);
+        return FS.registerDevice(i, {
+            open: e => {
+                e.seekable = !1
+            },
+            close: e => {
+                n && n.buffer && n.buffer.length && n(10)
+            },
+            read: (e, t, n, o, a) => {
+                for (var i = 0, u = 0; u < o; u++) {
+                    var s;
+                    try {
+                        s = r()
+                    } catch (e) {
+                        throw new FS.ErrnoError(29)
+                    }
+                    if (void 0 === s && 0 === i) throw new FS.ErrnoError(6);
+                    if (null == s) break;
+                    i++, t[n + u] = s
+                }
+                return i && (e.node.timestamp = Date.now()), i
+            },
+            write: (e, t, r, o, a) => {
+                for (var i = 0; i < o; i++) try {
+                    n(t[r + i])
+                } catch (e) {
+                    throw new FS.ErrnoError(29)
+                }
+                return o && (e.node.timestamp = Date.now()), i
+            }
+        }), FS.mkdev(o, a, i)
+    },
+    forceLoadFile: e => {
+        if (e.isDevice || e.isFolder || e.link || e.contents) return !0;
+        if ("undefined" != typeof XMLHttpRequest) throw new Error("Lazy loading should have been performed (contents set) in createLazyFile, but it was not. Lazy loading only works in web workers. Use --embed-file or --preload-file in emcc on the main thread.");
+        if (!read_) throw new Error("Cannot load without read() or XMLHttpRequest.");
+        try {
+            e.contents = intArrayFromString(read_(e.url), !0), e.usedBytes = e.contents.length
+        } catch (e) {
+            throw new FS.ErrnoError(29)
+        }
+    },
+    createLazyFile: (e, t, r, n, o) => {
+        function a() {
+            this.lengthKnown = !1, this.chunks = []
+        }
+        if (a.prototype.get = function(e) {
+                if (!(e > this.length - 1 || e < 0)) {
+                    var t = e % this.chunkSize,
+                        r = e / this.chunkSize | 0;
+                    return this.getter(r)[t]
+                }
+            }, a.prototype.setDataGetter = function(e) {
+                this.getter = e
+            }, a.prototype.cacheLength = function() {
+                var e = new XMLHttpRequest;
+                if (e.open("HEAD", r, !1), e.send(null), !(e.status >= 200 && e.status < 300 || 304 === e.status)) throw new Error("Couldn't load " + r + ". Status: " + e.status);
+                var t, n = Number(e.getResponseHeader("Content-length")),
+                    o = (t = e.getResponseHeader("Accept-Ranges")) && "bytes" === t,
+                    a = (t = e.getResponseHeader("Content-Encoding")) && "gzip" === t,
+                    i = 1048576;
+                o || (i = n);
+                var u = this;
+                u.setDataGetter(e => {
+                    var t = e * i,
+                        o = (e + 1) * i - 1;
+                    if (o = Math.min(o, n - 1), void 0 === u.chunks[e] && (u.chunks[e] = ((e, t) => {
+                            if (e > t) throw new Error("invalid range (" + e + ", " + t + ") or no bytes requested!");
+                            if (t > n - 1) throw new Error("only " + n + " bytes available! programmer error!");
+                            var o = new XMLHttpRequest;
+                            if (o.open("GET", r, !1), n !== i && o.setRequestHeader("Range", "bytes=" + e + "-" + t), o.responseType = "arraybuffer", o.overrideMimeType && o.overrideMimeType("text/plain; charset=x-user-defined"), o.send(null), !(o.status >= 200 && o.status < 300 || 304 === o.status)) throw new Error("Couldn't load " + r + ". Status: " + o.status);
+                            return void 0 !== o.response ? new Uint8Array(o.response || []) : intArrayFromString(o.responseText || "", !0)
+                        })(t, o)), void 0 === u.chunks[e]) throw new Error("doXHR failed!");
+                    return u.chunks[e]
+                }), !a && n || (i = n = 1, n = this.getter(0).length, i = n, out("LazyFiles on gzip forces download of the whole file when length is accessed")), this._length = n, this._chunkSize = i, this.lengthKnown = !0
+            }, "undefined" != typeof XMLHttpRequest) {
+            if (!ENVIRONMENT_IS_WORKER) throw "Cannot do synchronous binary XHRs outside webworkers in modern browsers. Use --embed-file or --preload-file in emcc";
+            var i = new a;
+            Object.defineProperties(i, {
+                length: {
+                    get: function() {
+                        return this.lengthKnown || this.cacheLength(), this._length
+                    }
+                },
+                chunkSize: {
+                    get: function() {
+                        return this.lengthKnown || this.cacheLength(), this._chunkSize
+                    }
+                }
+            });
+            var u = {
+                isDevice: !1,
+                contents: i
+            }
+        } else u = {
+            isDevice: !1,
+            url: r
+        };
+        var s = FS.createFile(e, t, u, n, o);
+        u.contents ? s.contents = u.contents : u.url && (s.contents = null, s.url = u.url), Object.defineProperties(s, {
+            usedBytes: {
+                get: function() {
+                    return this.contents.length
+                }
+            }
+        });
+        var l = {};
+        return Object.keys(s.stream_ops).forEach(e => {
+            var t = s.stream_ops[e];
+            l[e] = function() {
+                return FS.forceLoadFile(s), t.apply(null, arguments)
+            }
+        }), l.read = ((e, t, r, n, o) => {
+            FS.forceLoadFile(s);
+            var a = e.node.contents;
+            if (o >= a.length) return 0;
+            var i = Math.min(a.length - o, n);
+            if (a.slice)
+                for (var u = 0; u < i; u++) t[r + u] = a[o + u];
+            else
+                for (u = 0; u < i; u++) t[r + u] = a.get(o + u);
+            return i
+        }), s.stream_ops = l, s
+    },
+    createPreloadedFile: (e, t, r, n, o, a, i, u, s, l) => {
+        var c = t ? PATH_FS.resolve(PATH.join2(e, t)) : e,
+            d = getUniqueRunDependency("cp " + c);
 
-var Module=typeof Module!="undefined"?Module:{};var moduleOverrides=Object.assign({},Module);var arguments_=[];var thisProgram="./this.program";var quit_=(status,toThrow)=>{throw toThrow};var ENVIRONMENT_IS_WEB=typeof window=="object";var ENVIRONMENT_IS_WORKER=typeof importScripts=="function";var ENVIRONMENT_IS_NODE=typeof process=="object"&&typeof process.versions=="object"&&typeof process.versions.node=="string";var scriptDirectory="";function locateFile(path){if(Module["locateFile"]){return Module["locateFile"](path,scriptDirectory)}return scriptDirectory+path}var read_,readAsync,readBinary,setWindowTitle;function logExceptionOnExit(e){if(e instanceof ExitStatus)return;let toLog=e;err("exiting due to exception: "+toLog)}var fs;var nodePath;var requireNodeFS;if(ENVIRONMENT_IS_NODE){if(ENVIRONMENT_IS_WORKER){scriptDirectory=require("path").dirname(scriptDirectory)+"/"}else{scriptDirectory=__dirname+"/"}requireNodeFS=(()=>{if(!nodePath){fs=require("fs");nodePath=require("path")}});read_=function shell_read(filename,binary){requireNodeFS();filename=nodePath["normalize"](filename);return fs.readFileSync(filename,binary?undefined:"utf8")};readBinary=(filename=>{var ret=read_(filename,true);if(!ret.buffer){ret=new Uint8Array(ret)}return ret});readAsync=((filename,onload,onerror)=>{requireNodeFS();filename=nodePath["normalize"](filename);fs.readFile(filename,function(err,data){if(err)onerror(err);else onload(data.buffer)})});if(process["argv"].length>1){thisProgram=process["argv"][1].replace(/\\/g,"/")}arguments_=process["argv"].slice(2);if(typeof module!="undefined"){module["exports"]=Module}process["on"]("uncaughtException",function(ex){if(!(ex instanceof ExitStatus)){throw ex}});process["on"]("unhandledRejection",function(reason){throw reason});quit_=((status,toThrow)=>{if(keepRuntimeAlive()){process["exitCode"]=status;throw toThrow}logExceptionOnExit(toThrow);process["exit"](status)});Module["inspect"]=function(){return"[Emscripten Module object]"}}else if(ENVIRONMENT_IS_WEB||ENVIRONMENT_IS_WORKER){if(ENVIRONMENT_IS_WORKER){scriptDirectory=self.location.href}else if(typeof document!="undefined"&&document.currentScript){scriptDirectory=document.currentScript.src}if(scriptDirectory.indexOf("blob:")!==0){scriptDirectory=scriptDirectory.substr(0,scriptDirectory.replace(/[?#].*/,"").lastIndexOf("/")+1)}else{scriptDirectory=""}{read_=(url=>{var xhr=new XMLHttpRequest;xhr.open("GET",url,false);xhr.send(null);return xhr.responseText});if(ENVIRONMENT_IS_WORKER){readBinary=(url=>{var xhr=new XMLHttpRequest;xhr.open("GET",url,false);xhr.responseType="arraybuffer";xhr.send(null);return new Uint8Array(xhr.response)})}readAsync=((url,onload,onerror)=>{var xhr=new XMLHttpRequest;xhr.open("GET",url,true);xhr.responseType="arraybuffer";xhr.onload=(()=>{if(xhr.status==200||xhr.status==0&&xhr.response){onload(xhr.response);return}onerror()});xhr.onerror=onerror;xhr.send(null)})}setWindowTitle=(title=>document.title=title)}else{}var out=Module["print"]||console.log.bind(console);var err=Module["printErr"]||console.warn.bind(console);Object.assign(Module,moduleOverrides);moduleOverrides=null;if(Module["arguments"])arguments_=Module["arguments"];if(Module["thisProgram"])thisProgram=Module["thisProgram"];if(Module["quit"])quit_=Module["quit"];var tempRet0=0;var setTempRet0=value=>{tempRet0=value};var wasmBinary;if(Module["wasmBinary"])wasmBinary=Module["wasmBinary"];var noExitRuntime=Module["noExitRuntime"]||true;if(typeof WebAssembly!="object"){abort("no native wasm support detected")}var wasmMemory;var ABORT=false;var EXITSTATUS;function assert(condition,text){if(!condition){abort(text)}}var UTF8Decoder=typeof TextDecoder!="undefined"?new TextDecoder("utf8"):undefined;function UTF8ArrayToString(heap,idx,maxBytesToRead){var endIdx=idx+maxBytesToRead;var endPtr=idx;while(heap[endPtr]&&!(endPtr>=endIdx))++endPtr;if(endPtr-idx>16&&heap.subarray&&UTF8Decoder){return UTF8Decoder.decode(heap.subarray(idx,endPtr))}else{var str="";while(idx<endPtr){var u0=heap[idx++];if(!(u0&128)){str+=String.fromCharCode(u0);continue}var u1=heap[idx++]&63;if((u0&224)==192){str+=String.fromCharCode((u0&31)<<6|u1);continue}var u2=heap[idx++]&63;if((u0&240)==224){u0=(u0&15)<<12|u1<<6|u2}else{u0=(u0&7)<<18|u1<<12|u2<<6|heap[idx++]&63}if(u0<65536){str+=String.fromCharCode(u0)}else{var ch=u0-65536;str+=String.fromCharCode(55296|ch>>10,56320|ch&1023)}}}return str}function UTF8ToString(ptr,maxBytesToRead){return ptr?UTF8ArrayToString(HEAPU8,ptr,maxBytesToRead):""}function stringToUTF8Array(str,heap,outIdx,maxBytesToWrite){if(!(maxBytesToWrite>0))return 0;var startIdx=outIdx;var endIdx=outIdx+maxBytesToWrite-1;for(var i=0;i<str.length;++i){var u=str.charCodeAt(i);if(u>=55296&&u<=57343){var u1=str.charCodeAt(++i);u=65536+((u&1023)<<10)|u1&1023}if(u<=127){if(outIdx>=endIdx)break;heap[outIdx++]=u}else if(u<=2047){if(outIdx+1>=endIdx)break;heap[outIdx++]=192|u>>6;heap[outIdx++]=128|u&63}else if(u<=65535){if(outIdx+2>=endIdx)break;heap[outIdx++]=224|u>>12;heap[outIdx++]=128|u>>6&63;heap[outIdx++]=128|u&63}else{if(outIdx+3>=endIdx)break;heap[outIdx++]=240|u>>18;heap[outIdx++]=128|u>>12&63;heap[outIdx++]=128|u>>6&63;heap[outIdx++]=128|u&63}}heap[outIdx]=0;return outIdx-startIdx}function stringToUTF8(str,outPtr,maxBytesToWrite){return stringToUTF8Array(str,HEAPU8,outPtr,maxBytesToWrite)}function lengthBytesUTF8(str){var len=0;for(var i=0;i<str.length;++i){var u=str.charCodeAt(i);if(u>=55296&&u<=57343)u=65536+((u&1023)<<10)|str.charCodeAt(++i)&1023;if(u<=127)++len;else if(u<=2047)len+=2;else if(u<=65535)len+=3;else len+=4}return len}function allocateUTF8(str){var size=lengthBytesUTF8(str)+1;var ret=_malloc(size);if(ret)stringToUTF8Array(str,HEAP8,ret,size);return ret}function writeArrayToMemory(array,buffer){HEAP8.set(array,buffer)}function writeAsciiToMemory(str,buffer,dontAddNull){for(var i=0;i<str.length;++i){HEAP8[buffer++>>0]=str.charCodeAt(i)}if(!dontAddNull)HEAP8[buffer>>0]=0}var buffer,HEAP8,HEAPU8,HEAP16,HEAPU16,HEAP32,HEAPU32,HEAPF32,HEAPF64;function updateGlobalBufferAndViews(buf){buffer=buf;Module["HEAP8"]=HEAP8=new Int8Array(buf);Module["HEAP16"]=HEAP16=new Int16Array(buf);Module["HEAP32"]=HEAP32=new Int32Array(buf);Module["HEAPU8"]=HEAPU8=new Uint8Array(buf);Module["HEAPU16"]=HEAPU16=new Uint16Array(buf);Module["HEAPU32"]=HEAPU32=new Uint32Array(buf);Module["HEAPF32"]=HEAPF32=new Float32Array(buf);Module["HEAPF64"]=HEAPF64=new Float64Array(buf)}var INITIAL_MEMORY=Module["INITIAL_MEMORY"]||681574400;var wasmTable;var __ATPRERUN__=[];var __ATINIT__=[];var __ATMAIN__=[];var __ATPOSTRUN__=[];var runtimeInitialized=false;var runtimeExited=false;var runtimeKeepaliveCounter=0;function keepRuntimeAlive(){return noExitRuntime||runtimeKeepaliveCounter>0}function preRun(){if(Module["preRun"]){if(typeof Module["preRun"]=="function")Module["preRun"]=[Module["preRun"]];while(Module["preRun"].length){addOnPreRun(Module["preRun"].shift())}}callRuntimeCallbacks(__ATPRERUN__)}function initRuntime(){runtimeInitialized=true;if(!Module["noFSInit"]&&!FS.init.initialized)FS.init();FS.ignorePermissions=false;TTY.init();callRuntimeCallbacks(__ATINIT__)}function preMain(){callRuntimeCallbacks(__ATMAIN__)}function exitRuntime(){runtimeExited=true}function postRun(){if(Module["postRun"]){if(typeof Module["postRun"]=="function")Module["postRun"]=[Module["postRun"]];while(Module["postRun"].length){addOnPostRun(Module["postRun"].shift())}}callRuntimeCallbacks(__ATPOSTRUN__)}function addOnPreRun(cb){__ATPRERUN__.unshift(cb)}function addOnInit(cb){__ATINIT__.unshift(cb)}function addOnPostRun(cb){__ATPOSTRUN__.unshift(cb)}var runDependencies=0;var runDependencyWatcher=null;var dependenciesFulfilled=null;function getUniqueRunDependency(id){return id}function addRunDependency(id){runDependencies++;if(Module["monitorRunDependencies"]){Module["monitorRunDependencies"](runDependencies)}}function removeRunDependency(id){runDependencies--;if(Module["monitorRunDependencies"]){Module["monitorRunDependencies"](runDependencies)}if(runDependencies==0){if(runDependencyWatcher!==null){clearInterval(runDependencyWatcher);runDependencyWatcher=null}if(dependenciesFulfilled){var callback=dependenciesFulfilled;dependenciesFulfilled=null;callback()}}}Module["preloadedImages"]={};Module["preloadedAudios"]={};function abort(what){{if(Module["onAbort"]){Module["onAbort"](what)}}what="Aborted("+what+")";err(what);ABORT=true;EXITSTATUS=1;what+=". Build with -s ASSERTIONS=1 for more info.";var e=new WebAssembly.RuntimeError(what);throw e}var dataURIPrefix="data:application/octet-stream;base64,";function isDataURI(filename){return filename.startsWith(dataURIPrefix)}function isFileURI(filename){return filename.startsWith("file://")}var wasmBinaryFile;wasmBinaryFile="desmond.wasm";if(!isDataURI(wasmBinaryFile)){wasmBinaryFile=locateFile(wasmBinaryFile)}function getBinary(file){try{if(file==wasmBinaryFile&&wasmBinary){return new Uint8Array(wasmBinary)}if(readBinary){return readBinary(file)}else{throw"both async and sync fetching of the wasm failed"}}catch(err){abort(err)}}function getBinaryPromise(){if(!wasmBinary&&(ENVIRONMENT_IS_WEB||ENVIRONMENT_IS_WORKER)){if(typeof fetch=="function"&&!isFileURI(wasmBinaryFile)){return fetch(wasmBinaryFile,{credentials:"same-origin"}).then(function(response){if(!response["ok"]){throw"failed to load wasm binary file at '"+wasmBinaryFile+"'"}return response["arrayBuffer"]()}).catch(function(){return getBinary(wasmBinaryFile)})}else{if(readAsync){return new Promise(function(resolve,reject){readAsync(wasmBinaryFile,function(response){resolve(new Uint8Array(response))},reject)})}}}return Promise.resolve().then(function(){return getBinary(wasmBinaryFile)})}function createWasm(){var info={"a":asmLibraryArg};function receiveInstance(instance,module){var exports=instance.exports;Module["asm"]=exports;wasmMemory=Module["asm"]["x"];updateGlobalBufferAndViews(wasmMemory.buffer);wasmTable=Module["asm"]["S"];addOnInit(Module["asm"]["y"]);removeRunDependency("wasm-instantiate")}addRunDependency("wasm-instantiate");function receiveInstantiationResult(result){receiveInstance(result["instance"])}function instantiateArrayBuffer(receiver){return getBinaryPromise().then(function(binary){return WebAssembly.instantiate(binary,info)}).then(function(instance){return instance}).then(receiver,function(reason){err("failed to asynchronously prepare wasm: "+reason);abort(reason)})}function instantiateAsync(){if(!wasmBinary&&typeof WebAssembly.instantiateStreaming=="function"&&!isDataURI(wasmBinaryFile)&&!isFileURI(wasmBinaryFile)&&typeof fetch=="function"){return fetch(wasmBinaryFile,{credentials:"same-origin"}).then(function(response){var result=WebAssembly.instantiateStreaming(response,info);return result.then(receiveInstantiationResult,function(reason){err("wasm streaming compile failed: "+reason);err("falling back to ArrayBuffer instantiation");return instantiateArrayBuffer(receiveInstantiationResult)})})}else{return instantiateArrayBuffer(receiveInstantiationResult)}}if(Module["instantiateWasm"]){try{var exports=Module["instantiateWasm"](info,receiveInstance);return exports}catch(e){err("Module.instantiateWasm callback failed with error: "+e);return false}}instantiateAsync();return{}}var tempDouble;var tempI64;var ASM_CONSTS={464896:function(){wasmReady()}};function callRuntimeCallbacks(callbacks){while(callbacks.length>0){var callback=callbacks.shift();if(typeof callback=="function"){callback(Module);continue}var func=callback.func;if(typeof func=="number"){if(callback.arg===undefined){getWasmTableEntry(func)()}else{getWasmTableEntry(func)(callback.arg)}}else{func(callback.arg===undefined?null:callback.arg)}}}Module["callRuntimeCallbacks"]=callRuntimeCallbacks;function withStackSave(f){var stack=stackSave();var ret=f();stackRestore(stack);return ret}Module["withStackSave"]=withStackSave;function demangle(func){return func}Module["demangle"]=demangle;function demangleAll(text){var regex=/\b_Z[\w\d_]+/g;return text.replace(regex,function(x){var y=demangle(x);return x===y?x:y+" ["+x+"]"})}Module["demangleAll"]=demangleAll;var wasmTableMirror=[];Module["wasmTableMirror"]=wasmTableMirror;function getWasmTableEntry(funcPtr){var func=wasmTableMirror[funcPtr];if(!func){if(funcPtr>=wasmTableMirror.length)wasmTableMirror.length=funcPtr+1;wasmTableMirror[funcPtr]=func=wasmTable.get(funcPtr)}return func}Module["getWasmTableEntry"]=getWasmTableEntry;function handleException(e){if(e instanceof ExitStatus||e=="unwind"){return EXITSTATUS}quit_(1,e)}Module["handleException"]=handleException;function jsStackTrace(){var error=new Error;if(!error.stack){try{throw new Error}catch(e){error=e}if(!error.stack){return"(no stack trace available)"}}return error.stack.toString()}Module["jsStackTrace"]=jsStackTrace;function setWasmTableEntry(idx,func){wasmTable.set(idx,func);wasmTableMirror[idx]=func}Module["setWasmTableEntry"]=setWasmTableEntry;function stackTrace(){var js=jsStackTrace();if(Module["extraStackTrace"])js+="\n"+Module["extraStackTrace"]();return demangleAll(js)}Module["stackTrace"]=stackTrace;function ___assert_fail(condition,filename,line,func){abort("Assertion failed: "+UTF8ToString(condition)+", at: "+[filename?UTF8ToString(filename):"unknown filename",line,func?UTF8ToString(func):"unknown function"])}Module["___assert_fail"]=___assert_fail;function ___cxa_allocate_exception(size){return _malloc(size+16)+16}Module["___cxa_allocate_exception"]=___cxa_allocate_exception;function ExceptionInfo(excPtr){this.excPtr=excPtr;this.ptr=excPtr-16;this.set_type=function(type){HEAP32[this.ptr+4>>2]=type};this.get_type=function(){return HEAP32[this.ptr+4>>2]};this.set_destructor=function(destructor){HEAP32[this.ptr+8>>2]=destructor};this.get_destructor=function(){return HEAP32[this.ptr+8>>2]};this.set_refcount=function(refcount){HEAP32[this.ptr>>2]=refcount};this.set_caught=function(caught){caught=caught?1:0;HEAP8[this.ptr+12>>0]=caught};this.get_caught=function(){return HEAP8[this.ptr+12>>0]!=0};this.set_rethrown=function(rethrown){rethrown=rethrown?1:0;HEAP8[this.ptr+13>>0]=rethrown};this.get_rethrown=function(){return HEAP8[this.ptr+13>>0]!=0};this.init=function(type,destructor){this.set_type(type);this.set_destructor(destructor);this.set_refcount(0);this.set_caught(false);this.set_rethrown(false)};this.add_ref=function(){var value=HEAP32[this.ptr>>2];HEAP32[this.ptr>>2]=value+1};this.release_ref=function(){var prev=HEAP32[this.ptr>>2];HEAP32[this.ptr>>2]=prev-1;return prev===1}}Module["ExceptionInfo"]=ExceptionInfo;var exceptionLast=0;Module["exceptionLast"]=exceptionLast;var uncaughtExceptionCount=0;Module["uncaughtExceptionCount"]=uncaughtExceptionCount;function ___cxa_throw(ptr,type,destructor){var info=new ExceptionInfo(ptr);info.init(type,destructor);exceptionLast=ptr;uncaughtExceptionCount++;throw ptr}Module["___cxa_throw"]=___cxa_throw;function setErrNo(value){HEAP32[___errno_location()>>2]=value;return value}Module["setErrNo"]=setErrNo;var PATH={splitPath:function(filename){var splitPathRe=/^(\/?|)([\s\S]*?)((?:\.{1,2}|[^\/]+?|)(\.[^.\/]*|))(?:[\/]*)$/;return splitPathRe.exec(filename).slice(1)},normalizeArray:function(parts,allowAboveRoot){var up=0;for(var i=parts.length-1;i>=0;i--){var last=parts[i];if(last==="."){parts.splice(i,1)}else if(last===".."){parts.splice(i,1);up++}else if(up){parts.splice(i,1);up--}}if(allowAboveRoot){for(;up;up--){parts.unshift("..")}}return parts},normalize:function(path){var isAbsolute=path.charAt(0)==="/",trailingSlash=path.substr(-1)==="/";path=PATH.normalizeArray(path.split("/").filter(function(p){return!!p}),!isAbsolute).join("/");if(!path&&!isAbsolute){path="."}if(path&&trailingSlash){path+="/"}return(isAbsolute?"/":"")+path},dirname:function(path){var result=PATH.splitPath(path),root=result[0],dir=result[1];if(!root&&!dir){return"."}if(dir){dir=dir.substr(0,dir.length-1)}return root+dir},basename:function(path){if(path==="/")return"/";path=PATH.normalize(path);path=path.replace(/\/$/,"");var lastSlash=path.lastIndexOf("/");if(lastSlash===-1)return path;return path.substr(lastSlash+1)},extname:function(path){return PATH.splitPath(path)[3]},join:function(){var paths=Array.prototype.slice.call(arguments,0);return PATH.normalize(paths.join("/"))},join2:function(l,r){return PATH.normalize(l+"/"+r)}};Module["PATH"]=PATH;function getRandomDevice(){if(typeof crypto=="object"&&typeof crypto["getRandomValues"]=="function"){var randomBuffer=new Uint8Array(1);return function(){crypto.getRandomValues(randomBuffer);return randomBuffer[0]}}else if(ENVIRONMENT_IS_NODE){try{var crypto_module=require("crypto");return function(){return crypto_module["randomBytes"](1)[0]}}catch(e){}}return function(){abort("randomDevice")}}Module["getRandomDevice"]=getRandomDevice;var PATH_FS={resolve:function(){var resolvedPath="",resolvedAbsolute=false;for(var i=arguments.length-1;i>=-1&&!resolvedAbsolute;i--){var path=i>=0?arguments[i]:FS.cwd();if(typeof path!="string"){throw new TypeError("Arguments to path.resolve must be strings")}else if(!path){return""}resolvedPath=path+"/"+resolvedPath;resolvedAbsolute=path.charAt(0)==="/"}resolvedPath=PATH.normalizeArray(resolvedPath.split("/").filter(function(p){return!!p}),!resolvedAbsolute).join("/");return(resolvedAbsolute?"/":"")+resolvedPath||"."},relative:function(from,to){from=PATH_FS.resolve(from).substr(1);to=PATH_FS.resolve(to).substr(1);function trim(arr){var start=0;for(;start<arr.length;start++){if(arr[start]!=="")break}var end=arr.length-1;for(;end>=0;end--){if(arr[end]!=="")break}if(start>end)return[];return arr.slice(start,end-start+1)}var fromParts=trim(from.split("/"));var toParts=trim(to.split("/"));var length=Math.min(fromParts.length,toParts.length);var samePartsLength=length;for(var i=0;i<length;i++){if(fromParts[i]!==toParts[i]){samePartsLength=i;break}}var outputParts=[];for(var i=samePartsLength;i<fromParts.length;i++){outputParts.push("..")}outputParts=outputParts.concat(toParts.slice(samePartsLength));return outputParts.join("/")}};Module["PATH_FS"]=PATH_FS;var TTY={ttys:[],init:function(){},shutdown:function(){},register:function(dev,ops){TTY.ttys[dev]={input:[],output:[],ops:ops};FS.registerDevice(dev,TTY.stream_ops)},stream_ops:{open:function(stream){var tty=TTY.ttys[stream.node.rdev];if(!tty){throw new FS.ErrnoError(43)}stream.tty=tty;stream.seekable=false},close:function(stream){stream.tty.ops.flush(stream.tty)},flush:function(stream){stream.tty.ops.flush(stream.tty)},read:function(stream,buffer,offset,length,pos){if(!stream.tty||!stream.tty.ops.get_char){throw new FS.ErrnoError(60)}var bytesRead=0;for(var i=0;i<length;i++){var result;try{result=stream.tty.ops.get_char(stream.tty)}catch(e){throw new FS.ErrnoError(29)}if(result===undefined&&bytesRead===0){throw new FS.ErrnoError(6)}if(result===null||result===undefined)break;bytesRead++;buffer[offset+i]=result}if(bytesRead){stream.node.timestamp=Date.now()}return bytesRead},write:function(stream,buffer,offset,length,pos){if(!stream.tty||!stream.tty.ops.put_char){throw new FS.ErrnoError(60)}try{for(var i=0;i<length;i++){stream.tty.ops.put_char(stream.tty,buffer[offset+i])}}catch(e){throw new FS.ErrnoError(29)}if(length){stream.node.timestamp=Date.now()}return i}},default_tty_ops:{get_char:function(tty){if(!tty.input.length){var result=null;if(ENVIRONMENT_IS_NODE){var BUFSIZE=256;var buf=Buffer.alloc(BUFSIZE);var bytesRead=0;try{bytesRead=fs.readSync(process.stdin.fd,buf,0,BUFSIZE,-1)}catch(e){if(e.toString().includes("EOF"))bytesRead=0;else throw e}if(bytesRead>0){result=buf.slice(0,bytesRead).toString("utf-8")}else{result=null}}else if(typeof window!="undefined"&&typeof window.prompt=="function"){result=window.prompt("Input: ");if(result!==null){result+="\n"}}else if(typeof readline=="function"){result=readline();if(result!==null){result+="\n"}}if(!result){return null}tty.input=intArrayFromString(result,true)}return tty.input.shift()},put_char:function(tty,val){if(val===null||val===10){out(UTF8ArrayToString(tty.output,0));tty.output=[]}else{if(val!=0)tty.output.push(val)}},flush:function(tty){if(tty.output&&tty.output.length>0){out(UTF8ArrayToString(tty.output,0));tty.output=[]}}},default_tty1_ops:{put_char:function(tty,val){if(val===null||val===10){err(UTF8ArrayToString(tty.output,0));tty.output=[]}else{if(val!=0)tty.output.push(val)}},flush:function(tty){if(tty.output&&tty.output.length>0){err(UTF8ArrayToString(tty.output,0));tty.output=[]}}}};Module["TTY"]=TTY;function zeroMemory(address,size){HEAPU8.fill(0,address,address+size)}Module["zeroMemory"]=zeroMemory;function alignMemory(size,alignment){return Math.ceil(size/alignment)*alignment}Module["alignMemory"]=alignMemory;function mmapAlloc(size){abort()}Module["mmapAlloc"]=mmapAlloc;var MEMFS={ops_table:null,mount:function(mount){return MEMFS.createNode(null,"/",16384|511,0)},createNode:function(parent,name,mode,dev){if(FS.isBlkdev(mode)||FS.isFIFO(mode)){throw new FS.ErrnoError(63)}if(!MEMFS.ops_table){MEMFS.ops_table={dir:{node:{getattr:MEMFS.node_ops.getattr,setattr:MEMFS.node_ops.setattr,lookup:MEMFS.node_ops.lookup,mknod:MEMFS.node_ops.mknod,rename:MEMFS.node_ops.rename,unlink:MEMFS.node_ops.unlink,rmdir:MEMFS.node_ops.rmdir,readdir:MEMFS.node_ops.readdir,symlink:MEMFS.node_ops.symlink},stream:{llseek:MEMFS.stream_ops.llseek}},file:{node:{getattr:MEMFS.node_ops.getattr,setattr:MEMFS.node_ops.setattr},stream:{llseek:MEMFS.stream_ops.llseek,read:MEMFS.stream_ops.read,write:MEMFS.stream_ops.write,allocate:MEMFS.stream_ops.allocate,mmap:MEMFS.stream_ops.mmap,msync:MEMFS.stream_ops.msync}},link:{node:{getattr:MEMFS.node_ops.getattr,setattr:MEMFS.node_ops.setattr,readlink:MEMFS.node_ops.readlink},stream:{}},chrdev:{node:{getattr:MEMFS.node_ops.getattr,setattr:MEMFS.node_ops.setattr},stream:FS.chrdev_stream_ops}}}var node=FS.createNode(parent,name,mode,dev);if(FS.isDir(node.mode)){node.node_ops=MEMFS.ops_table.dir.node;node.stream_ops=MEMFS.ops_table.dir.stream;node.contents={}}else if(FS.isFile(node.mode)){node.node_ops=MEMFS.ops_table.file.node;node.stream_ops=MEMFS.ops_table.file.stream;node.usedBytes=0;node.contents=null}else if(FS.isLink(node.mode)){node.node_ops=MEMFS.ops_table.link.node;node.stream_ops=MEMFS.ops_table.link.stream}else if(FS.isChrdev(node.mode)){node.node_ops=MEMFS.ops_table.chrdev.node;node.stream_ops=MEMFS.ops_table.chrdev.stream}node.timestamp=Date.now();if(parent){parent.contents[name]=node;parent.timestamp=node.timestamp}return node},getFileDataAsTypedArray:function(node){if(!node.contents)return new Uint8Array(0);if(node.contents.subarray)return node.contents.subarray(0,node.usedBytes);return new Uint8Array(node.contents)},expandFileStorage:function(node,newCapacity){var prevCapacity=node.contents?node.contents.length:0;if(prevCapacity>=newCapacity)return;var CAPACITY_DOUBLING_MAX=1024*1024;newCapacity=Math.max(newCapacity,prevCapacity*(prevCapacity<CAPACITY_DOUBLING_MAX?2:1.125)>>>0);if(prevCapacity!=0)newCapacity=Math.max(newCapacity,256);var oldContents=node.contents;node.contents=new Uint8Array(newCapacity);if(node.usedBytes>0)node.contents.set(oldContents.subarray(0,node.usedBytes),0)},resizeFileStorage:function(node,newSize){if(node.usedBytes==newSize)return;if(newSize==0){node.contents=null;node.usedBytes=0}else{var oldContents=node.contents;node.contents=new Uint8Array(newSize);if(oldContents){node.contents.set(oldContents.subarray(0,Math.min(newSize,node.usedBytes)))}node.usedBytes=newSize}},node_ops:{getattr:function(node){var attr={};attr.dev=FS.isChrdev(node.mode)?node.id:1;attr.ino=node.id;attr.mode=node.mode;attr.nlink=1;attr.uid=0;attr.gid=0;attr.rdev=node.rdev;if(FS.isDir(node.mode)){attr.size=4096}else if(FS.isFile(node.mode)){attr.size=node.usedBytes}else if(FS.isLink(node.mode)){attr.size=node.link.length}else{attr.size=0}attr.atime=new Date(node.timestamp);attr.mtime=new Date(node.timestamp);attr.ctime=new Date(node.timestamp);attr.blksize=4096;attr.blocks=Math.ceil(attr.size/attr.blksize);return attr},setattr:function(node,attr){if(attr.mode!==undefined){node.mode=attr.mode}if(attr.timestamp!==undefined){node.timestamp=attr.timestamp}if(attr.size!==undefined){MEMFS.resizeFileStorage(node,attr.size)}},lookup:function(parent,name){throw FS.genericErrors[44]},mknod:function(parent,name,mode,dev){return MEMFS.createNode(parent,name,mode,dev)},rename:function(old_node,new_dir,new_name){if(FS.isDir(old_node.mode)){var new_node;try{new_node=FS.lookupNode(new_dir,new_name)}catch(e){}if(new_node){for(var i in new_node.contents){throw new FS.ErrnoError(55)}}}delete old_node.parent.contents[old_node.name];old_node.parent.timestamp=Date.now();old_node.name=new_name;new_dir.contents[new_name]=old_node;new_dir.timestamp=old_node.parent.timestamp;old_node.parent=new_dir},unlink:function(parent,name){delete parent.contents[name];parent.timestamp=Date.now()},rmdir:function(parent,name){var node=FS.lookupNode(parent,name);for(var i in node.contents){throw new FS.ErrnoError(55)}delete parent.contents[name];parent.timestamp=Date.now()},readdir:function(node){var entries=[".",".."];for(var key in node.contents){if(!node.contents.hasOwnProperty(key)){continue}entries.push(key)}return entries},symlink:function(parent,newname,oldpath){var node=MEMFS.createNode(parent,newname,511|40960,0);node.link=oldpath;return node},readlink:function(node){if(!FS.isLink(node.mode)){throw new FS.ErrnoError(28)}return node.link}},stream_ops:{read:function(stream,buffer,offset,length,position){var contents=stream.node.contents;if(position>=stream.node.usedBytes)return 0;var size=Math.min(stream.node.usedBytes-position,length);if(size>8&&contents.subarray){buffer.set(contents.subarray(position,position+size),offset)}else{for(var i=0;i<size;i++)buffer[offset+i]=contents[position+i]}return size},write:function(stream,buffer,offset,length,position,canOwn){if(!length)return 0;var node=stream.node;node.timestamp=Date.now();if(buffer.subarray&&(!node.contents||node.contents.subarray)){if(canOwn){node.contents=buffer.subarray(offset,offset+length);node.usedBytes=length;return length}else if(node.usedBytes===0&&position===0){node.contents=buffer.slice(offset,offset+length);node.usedBytes=length;return length}else if(position+length<=node.usedBytes){node.contents.set(buffer.subarray(offset,offset+length),position);return length}}MEMFS.expandFileStorage(node,position+length);if(node.contents.subarray&&buffer.subarray){node.contents.set(buffer.subarray(offset,offset+length),position)}else{for(var i=0;i<length;i++){node.contents[position+i]=buffer[offset+i]}}node.usedBytes=Math.max(node.usedBytes,position+length);return length},llseek:function(stream,offset,whence){var position=offset;if(whence===1){position+=stream.position}else if(whence===2){if(FS.isFile(stream.node.mode)){position+=stream.node.usedBytes}}if(position<0){throw new FS.ErrnoError(28)}return position},allocate:function(stream,offset,length){MEMFS.expandFileStorage(stream.node,offset+length);stream.node.usedBytes=Math.max(stream.node.usedBytes,offset+length)},mmap:function(stream,address,length,position,prot,flags){if(address!==0){throw new FS.ErrnoError(28)}if(!FS.isFile(stream.node.mode)){throw new FS.ErrnoError(43)}var ptr;var allocated;var contents=stream.node.contents;if(!(flags&2)&&contents.buffer===buffer){allocated=false;ptr=contents.byteOffset}else{if(position>0||position+length<contents.length){if(contents.subarray){contents=contents.subarray(position,position+length)}else{contents=Array.prototype.slice.call(contents,position,position+length)}}allocated=true;ptr=mmapAlloc(length);if(!ptr){throw new FS.ErrnoError(48)}HEAP8.set(contents,ptr)}return{ptr:ptr,allocated:allocated}},msync:function(stream,buffer,offset,length,mmapFlags){if(!FS.isFile(stream.node.mode)){throw new FS.ErrnoError(43)}if(mmapFlags&2){return 0}var bytesWritten=MEMFS.stream_ops.write(stream,buffer,0,length,offset,false);return 0}}};Module["MEMFS"]=MEMFS;function asyncLoad(url,onload,onerror,noRunDep){var dep=!noRunDep?getUniqueRunDependency("al "+url):"";readAsync(url,function(arrayBuffer){assert(arrayBuffer,'Loading data file "'+url+'" failed (no arrayBuffer).');onload(new Uint8Array(arrayBuffer));if(dep)removeRunDependency(dep)},function(event){if(onerror){onerror()}else{throw'Loading data file "'+url+'" failed.'}});if(dep)addRunDependency(dep)}Module["asyncLoad"]=asyncLoad;var FS={root:null,mounts:[],devices:{},streams:[],nextInode:1,nameTable:null,currentPath:"/",initialized:false,ignorePermissions:true,ErrnoError:null,genericErrors:{},filesystems:null,syncFSRequests:0,lookupPath:(path,opts={})=>{path=PATH_FS.resolve(FS.cwd(),path);if(!path)return{path:"",node:null};var defaults={follow_mount:true,recurse_count:0};opts=Object.assign(defaults,opts);if(opts.recurse_count>8){throw new FS.ErrnoError(32)}var parts=PATH.normalizeArray(path.split("/").filter(p=>!!p),false);var current=FS.root;var current_path="/";for(var i=0;i<parts.length;i++){var islast=i===parts.length-1;if(islast&&opts.parent){break}current=FS.lookupNode(current,parts[i]);current_path=PATH.join2(current_path,parts[i]);if(FS.isMountpoint(current)){if(!islast||islast&&opts.follow_mount){current=current.mounted.root}}if(!islast||opts.follow){var count=0;while(FS.isLink(current.mode)){var link=FS.readlink(current_path);current_path=PATH_FS.resolve(PATH.dirname(current_path),link);var lookup=FS.lookupPath(current_path,{recurse_count:opts.recurse_count+1});current=lookup.node;if(count++>40){throw new FS.ErrnoError(32)}}}}return{path:current_path,node:current}},getPath:node=>{var path;while(true){if(FS.isRoot(node)){var mount=node.mount.mountpoint;if(!path)return mount;return mount[mount.length-1]!=="/"?mount+"/"+path:mount+path}path=path?node.name+"/"+path:node.name;node=node.parent}},hashName:(parentid,name)=>{var hash=0;for(var i=0;i<name.length;i++){hash=(hash<<5)-hash+name.charCodeAt(i)|0}return(parentid+hash>>>0)%FS.nameTable.length},hashAddNode:node=>{var hash=FS.hashName(node.parent.id,node.name);node.name_next=FS.nameTable[hash];FS.nameTable[hash]=node},hashRemoveNode:node=>{var hash=FS.hashName(node.parent.id,node.name);if(FS.nameTable[hash]===node){FS.nameTable[hash]=node.name_next}else{var current=FS.nameTable[hash];while(current){if(current.name_next===node){current.name_next=node.name_next;break}current=current.name_next}}},lookupNode:(parent,name)=>{var errCode=FS.mayLookup(parent);if(errCode){throw new FS.ErrnoError(errCode,parent)}var hash=FS.hashName(parent.id,name);for(var node=FS.nameTable[hash];node;node=node.name_next){var nodeName=node.name;if(node.parent.id===parent.id&&nodeName===name){return node}}return FS.lookup(parent,name)},createNode:(parent,name,mode,rdev)=>{var node=new FS.FSNode(parent,name,mode,rdev);FS.hashAddNode(node);return node},destroyNode:node=>{FS.hashRemoveNode(node)},isRoot:node=>{return node===node.parent},isMountpoint:node=>{return!!node.mounted},isFile:mode=>{return(mode&61440)===32768},isDir:mode=>{return(mode&61440)===16384},isLink:mode=>{return(mode&61440)===40960},isChrdev:mode=>{return(mode&61440)===8192},isBlkdev:mode=>{return(mode&61440)===24576},isFIFO:mode=>{return(mode&61440)===4096},isSocket:mode=>{return(mode&49152)===49152},flagModes:{"r":0,"r+":2,"w":577,"w+":578,"a":1089,"a+":1090},modeStringToFlags:str=>{var flags=FS.flagModes[str];if(typeof flags=="undefined"){throw new Error("Unknown file open mode: "+str)}return flags},flagsToPermissionString:flag=>{var perms=["r","w","rw"][flag&3];if(flag&512){perms+="w"}return perms},nodePermissions:(node,perms)=>{if(FS.ignorePermissions){return 0}if(perms.includes("r")&&!(node.mode&292)){return 2}else if(perms.includes("w")&&!(node.mode&146)){return 2}else if(perms.includes("x")&&!(node.mode&73)){return 2}return 0},mayLookup:dir=>{var errCode=FS.nodePermissions(dir,"x");if(errCode)return errCode;if(!dir.node_ops.lookup)return 2;return 0},mayCreate:(dir,name)=>{try{var node=FS.lookupNode(dir,name);return 20}catch(e){}return FS.nodePermissions(dir,"wx")},mayDelete:(dir,name,isdir)=>{var node;try{node=FS.lookupNode(dir,name)}catch(e){return e.errno}var errCode=FS.nodePermissions(dir,"wx");if(errCode){return errCode}if(isdir){if(!FS.isDir(node.mode)){return 54}if(FS.isRoot(node)||FS.getPath(node)===FS.cwd()){return 10}}else{if(FS.isDir(node.mode)){return 31}}return 0},mayOpen:(node,flags)=>{if(!node){return 44}if(FS.isLink(node.mode)){return 32}else if(FS.isDir(node.mode)){if(FS.flagsToPermissionString(flags)!=="r"||flags&512){return 31}}return FS.nodePermissions(node,FS.flagsToPermissionString(flags))},MAX_OPEN_FDS:4096,nextfd:(fd_start=0,fd_end=FS.MAX_OPEN_FDS)=>{for(var fd=fd_start;fd<=fd_end;fd++){if(!FS.streams[fd]){return fd}}throw new FS.ErrnoError(33)},getStream:fd=>FS.streams[fd],createStream:(stream,fd_start,fd_end)=>{if(!FS.FSStream){FS.FSStream=function(){};FS.FSStream.prototype={object:{get:function(){return this.node},set:function(val){this.node=val}},isRead:{get:function(){return(this.flags&2097155)!==1}},isWrite:{get:function(){return(this.flags&2097155)!==0}},isAppend:{get:function(){return this.flags&1024}}}}stream=Object.assign(new FS.FSStream,stream);var fd=FS.nextfd(fd_start,fd_end);stream.fd=fd;FS.streams[fd]=stream;return stream},closeStream:fd=>{FS.streams[fd]=null},chrdev_stream_ops:{open:stream=>{var device=FS.getDevice(stream.node.rdev);stream.stream_ops=device.stream_ops;if(stream.stream_ops.open){stream.stream_ops.open(stream)}},llseek:()=>{throw new FS.ErrnoError(70)}},major:dev=>dev>>8,minor:dev=>dev&255,makedev:(ma,mi)=>ma<<8|mi,registerDevice:(dev,ops)=>{FS.devices[dev]={stream_ops:ops}},getDevice:dev=>FS.devices[dev],getMounts:mount=>{var mounts=[];var check=[mount];while(check.length){var m=check.pop();mounts.push(m);check.push.apply(check,m.mounts)}return mounts},syncfs:(populate,callback)=>{if(typeof populate=="function"){callback=populate;populate=false}FS.syncFSRequests++;if(FS.syncFSRequests>1){err("warning: "+FS.syncFSRequests+" FS.syncfs operations in flight at once, probably just doing extra work")}var mounts=FS.getMounts(FS.root.mount);var completed=0;function doCallback(errCode){FS.syncFSRequests--;return callback(errCode)}function done(errCode){if(errCode){if(!done.errored){done.errored=true;return doCallback(errCode)}return}if(++completed>=mounts.length){doCallback(null)}}mounts.forEach(mount=>{if(!mount.type.syncfs){return done(null)}mount.type.syncfs(mount,populate,done)})},mount:(type,opts,mountpoint)=>{var root=mountpoint==="/";var pseudo=!mountpoint;var node;if(root&&FS.root){throw new FS.ErrnoError(10)}else if(!root&&!pseudo){var lookup=FS.lookupPath(mountpoint,{follow_mount:false});mountpoint=lookup.path;node=lookup.node;if(FS.isMountpoint(node)){throw new FS.ErrnoError(10)}if(!FS.isDir(node.mode)){throw new FS.ErrnoError(54)}}var mount={type:type,opts:opts,mountpoint:mountpoint,mounts:[]};var mountRoot=type.mount(mount);mountRoot.mount=mount;mount.root=mountRoot;if(root){FS.root=mountRoot}else if(node){node.mounted=mount;if(node.mount){node.mount.mounts.push(mount)}}return mountRoot},unmount:mountpoint=>{var lookup=FS.lookupPath(mountpoint,{follow_mount:false});if(!FS.isMountpoint(lookup.node)){throw new FS.ErrnoError(28)}var node=lookup.node;var mount=node.mounted;var mounts=FS.getMounts(mount);Object.keys(FS.nameTable).forEach(hash=>{var current=FS.nameTable[hash];while(current){var next=current.name_next;if(mounts.includes(current.mount)){FS.destroyNode(current)}current=next}});node.mounted=null;var idx=node.mount.mounts.indexOf(mount);node.mount.mounts.splice(idx,1)},lookup:(parent,name)=>{return parent.node_ops.lookup(parent,name)},mknod:(path,mode,dev)=>{var lookup=FS.lookupPath(path,{parent:true});var parent=lookup.node;var name=PATH.basename(path);if(!name||name==="."||name===".."){throw new FS.ErrnoError(28)}var errCode=FS.mayCreate(parent,name);if(errCode){throw new FS.ErrnoError(errCode)}if(!parent.node_ops.mknod){throw new FS.ErrnoError(63)}return parent.node_ops.mknod(parent,name,mode,dev)},create:(path,mode)=>{mode=mode!==undefined?mode:438;mode&=4095;mode|=32768;return FS.mknod(path,mode,0)},mkdir:(path,mode)=>{mode=mode!==undefined?mode:511;mode&=511|512;mode|=16384;return FS.mknod(path,mode,0)},mkdirTree:(path,mode)=>{var dirs=path.split("/");var d="";for(var i=0;i<dirs.length;++i){if(!dirs[i])continue;d+="/"+dirs[i];try{FS.mkdir(d,mode)}catch(e){if(e.errno!=20)throw e}}},mkdev:(path,mode,dev)=>{if(typeof dev=="undefined"){dev=mode;mode=438}mode|=8192;return FS.mknod(path,mode,dev)},symlink:(oldpath,newpath)=>{if(!PATH_FS.resolve(oldpath)){throw new FS.ErrnoError(44)}var lookup=FS.lookupPath(newpath,{parent:true});var parent=lookup.node;if(!parent){throw new FS.ErrnoError(44)}var newname=PATH.basename(newpath);var errCode=FS.mayCreate(parent,newname);if(errCode){throw new FS.ErrnoError(errCode)}if(!parent.node_ops.symlink){throw new FS.ErrnoError(63)}return parent.node_ops.symlink(parent,newname,oldpath)},rename:(old_path,new_path)=>{var old_dirname=PATH.dirname(old_path);var new_dirname=PATH.dirname(new_path);var old_name=PATH.basename(old_path);var new_name=PATH.basename(new_path);var lookup,old_dir,new_dir;lookup=FS.lookupPath(old_path,{parent:true});old_dir=lookup.node;lookup=FS.lookupPath(new_path,{parent:true});new_dir=lookup.node;if(!old_dir||!new_dir)throw new FS.ErrnoError(44);if(old_dir.mount!==new_dir.mount){throw new FS.ErrnoError(75)}var old_node=FS.lookupNode(old_dir,old_name);var relative=PATH_FS.relative(old_path,new_dirname);if(relative.charAt(0)!=="."){throw new FS.ErrnoError(28)}relative=PATH_FS.relative(new_path,old_dirname);if(relative.charAt(0)!=="."){throw new FS.ErrnoError(55)}var new_node;try{new_node=FS.lookupNode(new_dir,new_name)}catch(e){}if(old_node===new_node){return}var isdir=FS.isDir(old_node.mode);var errCode=FS.mayDelete(old_dir,old_name,isdir);if(errCode){throw new FS.ErrnoError(errCode)}errCode=new_node?FS.mayDelete(new_dir,new_name,isdir):FS.mayCreate(new_dir,new_name);if(errCode){throw new FS.ErrnoError(errCode)}if(!old_dir.node_ops.rename){throw new FS.ErrnoError(63)}if(FS.isMountpoint(old_node)||new_node&&FS.isMountpoint(new_node)){throw new FS.ErrnoError(10)}if(new_dir!==old_dir){errCode=FS.nodePermissions(old_dir,"w");if(errCode){throw new FS.ErrnoError(errCode)}}FS.hashRemoveNode(old_node);try{old_dir.node_ops.rename(old_node,new_dir,new_name)}catch(e){throw e}finally{FS.hashAddNode(old_node)}},rmdir:path=>{var lookup=FS.lookupPath(path,{parent:true});var parent=lookup.node;var name=PATH.basename(path);var node=FS.lookupNode(parent,name);var errCode=FS.mayDelete(parent,name,true);if(errCode){throw new FS.ErrnoError(errCode)}if(!parent.node_ops.rmdir){throw new FS.ErrnoError(63)}if(FS.isMountpoint(node)){throw new FS.ErrnoError(10)}parent.node_ops.rmdir(parent,name);FS.destroyNode(node)},readdir:path=>{var lookup=FS.lookupPath(path,{follow:true});var node=lookup.node;if(!node.node_ops.readdir){throw new FS.ErrnoError(54)}return node.node_ops.readdir(node)},unlink:path=>{var lookup=FS.lookupPath(path,{parent:true});var parent=lookup.node;if(!parent){throw new FS.ErrnoError(44)}var name=PATH.basename(path);var node=FS.lookupNode(parent,name);var errCode=FS.mayDelete(parent,name,false);if(errCode){throw new FS.ErrnoError(errCode)}if(!parent.node_ops.unlink){throw new FS.ErrnoError(63)}if(FS.isMountpoint(node)){throw new FS.ErrnoError(10)}parent.node_ops.unlink(parent,name);FS.destroyNode(node)},readlink:path=>{var lookup=FS.lookupPath(path);var link=lookup.node;if(!link){throw new FS.ErrnoError(44)}if(!link.node_ops.readlink){throw new FS.ErrnoError(28)}return PATH_FS.resolve(FS.getPath(link.parent),link.node_ops.readlink(link))},stat:(path,dontFollow)=>{var lookup=FS.lookupPath(path,{follow:!dontFollow});var node=lookup.node;if(!node){throw new FS.ErrnoError(44)}if(!node.node_ops.getattr){throw new FS.ErrnoError(63)}return node.node_ops.getattr(node)},lstat:path=>{return FS.stat(path,true)},chmod:(path,mode,dontFollow)=>{var node;if(typeof path=="string"){var lookup=FS.lookupPath(path,{follow:!dontFollow});node=lookup.node}else{node=path}if(!node.node_ops.setattr){throw new FS.ErrnoError(63)}node.node_ops.setattr(node,{mode:mode&4095|node.mode&~4095,timestamp:Date.now()})},lchmod:(path,mode)=>{FS.chmod(path,mode,true)},fchmod:(fd,mode)=>{var stream=FS.getStream(fd);if(!stream){throw new FS.ErrnoError(8)}FS.chmod(stream.node,mode)},chown:(path,uid,gid,dontFollow)=>{var node;if(typeof path=="string"){var lookup=FS.lookupPath(path,{follow:!dontFollow});node=lookup.node}else{node=path}if(!node.node_ops.setattr){throw new FS.ErrnoError(63)}node.node_ops.setattr(node,{timestamp:Date.now()})},lchown:(path,uid,gid)=>{FS.chown(path,uid,gid,true)},fchown:(fd,uid,gid)=>{var stream=FS.getStream(fd);if(!stream){throw new FS.ErrnoError(8)}FS.chown(stream.node,uid,gid)},truncate:(path,len)=>{if(len<0){throw new FS.ErrnoError(28)}var node;if(typeof path=="string"){var lookup=FS.lookupPath(path,{follow:true});node=lookup.node}else{node=path}if(!node.node_ops.setattr){throw new FS.ErrnoError(63)}if(FS.isDir(node.mode)){throw new FS.ErrnoError(31)}if(!FS.isFile(node.mode)){throw new FS.ErrnoError(28)}var errCode=FS.nodePermissions(node,"w");if(errCode){throw new FS.ErrnoError(errCode)}node.node_ops.setattr(node,{size:len,timestamp:Date.now()})},ftruncate:(fd,len)=>{var stream=FS.getStream(fd);if(!stream){throw new FS.ErrnoError(8)}if((stream.flags&2097155)===0){throw new FS.ErrnoError(28)}FS.truncate(stream.node,len)},utime:(path,atime,mtime)=>{var lookup=FS.lookupPath(path,{follow:true});var node=lookup.node;node.node_ops.setattr(node,{timestamp:Math.max(atime,mtime)})},open:(path,flags,mode,fd_start,fd_end)=>{if(path===""){throw new FS.ErrnoError(44)}flags=typeof flags=="string"?FS.modeStringToFlags(flags):flags;mode=typeof mode=="undefined"?438:mode;if(flags&64){mode=mode&4095|32768}else{mode=0}var node;if(typeof path=="object"){node=path}else{path=PATH.normalize(path);try{var lookup=FS.lookupPath(path,{follow:!(flags&131072)});node=lookup.node}catch(e){}}var created=false;if(flags&64){if(node){if(flags&128){throw new FS.ErrnoError(20)}}else{node=FS.mknod(path,mode,0);created=true}}if(!node){throw new FS.ErrnoError(44)}if(FS.isChrdev(node.mode)){flags&=~512}if(flags&65536&&!FS.isDir(node.mode)){throw new FS.ErrnoError(54)}if(!created){var errCode=FS.mayOpen(node,flags);if(errCode){throw new FS.ErrnoError(errCode)}}if(flags&512){FS.truncate(node,0)}flags&=~(128|512|131072);var stream=FS.createStream({node:node,path:FS.getPath(node),flags:flags,seekable:true,position:0,stream_ops:node.stream_ops,ungotten:[],error:false},fd_start,fd_end);if(stream.stream_ops.open){stream.stream_ops.open(stream)}if(Module["logReadFiles"]&&!(flags&1)){if(!FS.readFiles)FS.readFiles={};if(!(path in FS.readFiles)){FS.readFiles[path]=1}}return stream},close:stream=>{if(FS.isClosed(stream)){throw new FS.ErrnoError(8)}if(stream.getdents)stream.getdents=null;try{if(stream.stream_ops.close){stream.stream_ops.close(stream)}}catch(e){throw e}finally{FS.closeStream(stream.fd)}stream.fd=null},isClosed:stream=>{return stream.fd===null},llseek:(stream,offset,whence)=>{if(FS.isClosed(stream)){throw new FS.ErrnoError(8)}if(!stream.seekable||!stream.stream_ops.llseek){throw new FS.ErrnoError(70)}if(whence!=0&&whence!=1&&whence!=2){throw new FS.ErrnoError(28)}stream.position=stream.stream_ops.llseek(stream,offset,whence);stream.ungotten=[];return stream.position},read:(stream,buffer,offset,length,position)=>{if(length<0||position<0){throw new FS.ErrnoError(28)}if(FS.isClosed(stream)){throw new FS.ErrnoError(8)}if((stream.flags&2097155)===1){throw new FS.ErrnoError(8)}if(FS.isDir(stream.node.mode)){throw new FS.ErrnoError(31)}if(!stream.stream_ops.read){throw new FS.ErrnoError(28)}var seeking=typeof position!="undefined";if(!seeking){position=stream.position}else if(!stream.seekable){throw new FS.ErrnoError(70)}var bytesRead=stream.stream_ops.read(stream,buffer,offset,length,position);if(!seeking)stream.position+=bytesRead;return bytesRead},write:(stream,buffer,offset,length,position,canOwn)=>{if(length<0||position<0){throw new FS.ErrnoError(28)}if(FS.isClosed(stream)){throw new FS.ErrnoError(8)}if((stream.flags&2097155)===0){throw new FS.ErrnoError(8)}if(FS.isDir(stream.node.mode)){throw new FS.ErrnoError(31)}if(!stream.stream_ops.write){throw new FS.ErrnoError(28)}if(stream.seekable&&stream.flags&1024){FS.llseek(stream,0,2)}var seeking=typeof position!="undefined";if(!seeking){position=stream.position}else if(!stream.seekable){throw new FS.ErrnoError(70)}var bytesWritten=stream.stream_ops.write(stream,buffer,offset,length,position,canOwn);if(!seeking)stream.position+=bytesWritten;return bytesWritten},allocate:(stream,offset,length)=>{if(FS.isClosed(stream)){throw new FS.ErrnoError(8)}if(offset<0||length<=0){throw new FS.ErrnoError(28)}if((stream.flags&2097155)===0){throw new FS.ErrnoError(8)}if(!FS.isFile(stream.node.mode)&&!FS.isDir(stream.node.mode)){throw new FS.ErrnoError(43)}if(!stream.stream_ops.allocate){throw new FS.ErrnoError(138)}stream.stream_ops.allocate(stream,offset,length)},mmap:(stream,address,length,position,prot,flags)=>{if((prot&2)!==0&&(flags&2)===0&&(stream.flags&2097155)!==2){throw new FS.ErrnoError(2)}if((stream.flags&2097155)===1){throw new FS.ErrnoError(2)}if(!stream.stream_ops.mmap){throw new FS.ErrnoError(43)}return stream.stream_ops.mmap(stream,address,length,position,prot,flags)},msync:(stream,buffer,offset,length,mmapFlags)=>{if(!stream||!stream.stream_ops.msync){return 0}return stream.stream_ops.msync(stream,buffer,offset,length,mmapFlags)},munmap:stream=>0,ioctl:(stream,cmd,arg)=>{if(!stream.stream_ops.ioctl){throw new FS.ErrnoError(59)}return stream.stream_ops.ioctl(stream,cmd,arg)},readFile:(path,opts={})=>{opts.flags=opts.flags||0;opts.encoding=opts.encoding||"binary";if(opts.encoding!=="utf8"&&opts.encoding!=="binary"){throw new Error('Invalid encoding type "'+opts.encoding+'"')}var ret;var stream=FS.open(path,opts.flags);var stat=FS.stat(path);var length=stat.size;var buf=new Uint8Array(length);FS.read(stream,buf,0,length,0);if(opts.encoding==="utf8"){ret=UTF8ArrayToString(buf,0)}else if(opts.encoding==="binary"){ret=buf}FS.close(stream);return ret},writeFile:(path,data,opts={})=>{opts.flags=opts.flags||577;var stream=FS.open(path,opts.flags,opts.mode);if(typeof data=="string"){var buf=new Uint8Array(lengthBytesUTF8(data)+1);var actualNumBytes=stringToUTF8Array(data,buf,0,buf.length);FS.write(stream,buf,0,actualNumBytes,undefined,opts.canOwn)}else if(ArrayBuffer.isView(data)){FS.write(stream,data,0,data.byteLength,undefined,opts.canOwn)}else{throw new Error("Unsupported data type")}FS.close(stream)},cwd:()=>FS.currentPath,chdir:path=>{var lookup=FS.lookupPath(path,{follow:true});if(lookup.node===null){throw new FS.ErrnoError(44)}if(!FS.isDir(lookup.node.mode)){throw new FS.ErrnoError(54)}var errCode=FS.nodePermissions(lookup.node,"x");if(errCode){throw new FS.ErrnoError(errCode)}FS.currentPath=lookup.path},createDefaultDirectories:()=>{FS.mkdir("/tmp");FS.mkdir("/home");FS.mkdir("/home/web_user")},createDefaultDevices:()=>{FS.mkdir("/dev");FS.registerDevice(FS.makedev(1,3),{read:()=>0,write:(stream,buffer,offset,length,pos)=>length});FS.mkdev("/dev/null",FS.makedev(1,3));TTY.register(FS.makedev(5,0),TTY.default_tty_ops);TTY.register(FS.makedev(6,0),TTY.default_tty1_ops);FS.mkdev("/dev/tty",FS.makedev(5,0));FS.mkdev("/dev/tty1",FS.makedev(6,0));var random_device=getRandomDevice();FS.createDevice("/dev","random",random_device);FS.createDevice("/dev","urandom",random_device);FS.mkdir("/dev/shm");FS.mkdir("/dev/shm/tmp")},createSpecialDirectories:()=>{FS.mkdir("/proc");var proc_self=FS.mkdir("/proc/self");FS.mkdir("/proc/self/fd");FS.mount({mount:()=>{var node=FS.createNode(proc_self,"fd",16384|511,73);node.node_ops={lookup:(parent,name)=>{var fd=+name;var stream=FS.getStream(fd);if(!stream)throw new FS.ErrnoError(8);var ret={parent:null,mount:{mountpoint:"fake"},node_ops:{readlink:()=>stream.path}};ret.parent=ret;return ret}};return node}},{},"/proc/self/fd")},createStandardStreams:()=>{if(Module["stdin"]){FS.createDevice("/dev","stdin",Module["stdin"])}else{FS.symlink("/dev/tty","/dev/stdin")}if(Module["stdout"]){FS.createDevice("/dev","stdout",null,Module["stdout"])}else{FS.symlink("/dev/tty","/dev/stdout")}if(Module["stderr"]){FS.createDevice("/dev","stderr",null,Module["stderr"])}else{FS.symlink("/dev/tty1","/dev/stderr")}var stdin=FS.open("/dev/stdin",0);var stdout=FS.open("/dev/stdout",1);var stderr=FS.open("/dev/stderr",1)},ensureErrnoError:()=>{if(FS.ErrnoError)return;FS.ErrnoError=function ErrnoError(errno,node){this.node=node;this.setErrno=function(errno){this.errno=errno};this.setErrno(errno);this.message="FS error"};FS.ErrnoError.prototype=new Error;FS.ErrnoError.prototype.constructor=FS.ErrnoError;[44].forEach(code=>{FS.genericErrors[code]=new FS.ErrnoError(code);FS.genericErrors[code].stack="<generic error, no stack>"})},staticInit:()=>{FS.ensureErrnoError();FS.nameTable=new Array(4096);FS.mount(MEMFS,{},"/");FS.createDefaultDirectories();FS.createDefaultDevices();FS.createSpecialDirectories();FS.filesystems={"MEMFS":MEMFS}},init:(input,output,error)=>{FS.init.initialized=true;FS.ensureErrnoError();Module["stdin"]=input||Module["stdin"];Module["stdout"]=output||Module["stdout"];Module["stderr"]=error||Module["stderr"];FS.createStandardStreams()},quit:()=>{FS.init.initialized=false;for(var i=0;i<FS.streams.length;i++){var stream=FS.streams[i];if(!stream){continue}FS.close(stream)}},getMode:(canRead,canWrite)=>{var mode=0;if(canRead)mode|=292|73;if(canWrite)mode|=146;return mode},findObject:(path,dontResolveLastLink)=>{var ret=FS.analyzePath(path,dontResolveLastLink);if(ret.exists){return ret.object}else{return null}},analyzePath:(path,dontResolveLastLink)=>{try{var lookup=FS.lookupPath(path,{follow:!dontResolveLastLink});path=lookup.path}catch(e){}var ret={isRoot:false,exists:false,error:0,name:null,path:null,object:null,parentExists:false,parentPath:null,parentObject:null};try{var lookup=FS.lookupPath(path,{parent:true});ret.parentExists=true;ret.parentPath=lookup.path;ret.parentObject=lookup.node;ret.name=PATH.basename(path);lookup=FS.lookupPath(path,{follow:!dontResolveLastLink});ret.exists=true;ret.path=lookup.path;ret.object=lookup.node;ret.name=lookup.node.name;ret.isRoot=lookup.path==="/"}catch(e){ret.error=e.errno}return ret},createPath:(parent,path,canRead,canWrite)=>{parent=typeof parent=="string"?parent:FS.getPath(parent);var parts=path.split("/").reverse();while(parts.length){var part=parts.pop();if(!part)continue;var current=PATH.join2(parent,part);try{FS.mkdir(current)}catch(e){}parent=current}return current},createFile:(parent,name,properties,canRead,canWrite)=>{var path=PATH.join2(typeof parent=="string"?parent:FS.getPath(parent),name);var mode=FS.getMode(canRead,canWrite);return FS.create(path,mode)},createDataFile:(parent,name,data,canRead,canWrite,canOwn)=>{var path=name;if(parent){parent=typeof parent=="string"?parent:FS.getPath(parent);path=name?PATH.join2(parent,name):parent}var mode=FS.getMode(canRead,canWrite);var node=FS.create(path,mode);if(data){if(typeof data=="string"){var arr=new Array(data.length);for(var i=0,len=data.length;i<len;++i)arr[i]=data.charCodeAt(i);data=arr}FS.chmod(node,mode|146);var stream=FS.open(node,577);FS.write(stream,data,0,data.length,0,canOwn);FS.close(stream);FS.chmod(node,mode)}return node},createDevice:(parent,name,input,output)=>{var path=PATH.join2(typeof parent=="string"?parent:FS.getPath(parent),name);var mode=FS.getMode(!!input,!!output);if(!FS.createDevice.major)FS.createDevice.major=64;var dev=FS.makedev(FS.createDevice.major++,0);FS.registerDevice(dev,{open:stream=>{stream.seekable=false},close:stream=>{if(output&&output.buffer&&output.buffer.length){output(10)}},read:(stream,buffer,offset,length,pos)=>{var bytesRead=0;for(var i=0;i<length;i++){var result;try{result=input()}catch(e){throw new FS.ErrnoError(29)}if(result===undefined&&bytesRead===0){throw new FS.ErrnoError(6)}if(result===null||result===undefined)break;bytesRead++;buffer[offset+i]=result}if(bytesRead){stream.node.timestamp=Date.now()}return bytesRead},write:(stream,buffer,offset,length,pos)=>{for(var i=0;i<length;i++){try{output(buffer[offset+i])}catch(e){throw new FS.ErrnoError(29)}}if(length){stream.node.timestamp=Date.now()}return i}});return FS.mkdev(path,mode,dev)},forceLoadFile:obj=>{if(obj.isDevice||obj.isFolder||obj.link||obj.contents)return true;if(typeof XMLHttpRequest!="undefined"){throw new Error("Lazy loading should have been performed (contents set) in createLazyFile, but it was not. Lazy loading only works in web workers. Use --embed-file or --preload-file in emcc on the main thread.")}else if(read_){try{obj.contents=intArrayFromString(read_(obj.url),true);obj.usedBytes=obj.contents.length}catch(e){throw new FS.ErrnoError(29)}}else{throw new Error("Cannot load without read() or XMLHttpRequest.")}},createLazyFile:(parent,name,url,canRead,canWrite)=>{function LazyUint8Array(){this.lengthKnown=false;this.chunks=[]}LazyUint8Array.prototype.get=function LazyUint8Array_get(idx){if(idx>this.length-1||idx<0){return undefined}var chunkOffset=idx%this.chunkSize;var chunkNum=idx/this.chunkSize|0;return this.getter(chunkNum)[chunkOffset]};LazyUint8Array.prototype.setDataGetter=function LazyUint8Array_setDataGetter(getter){this.getter=getter};LazyUint8Array.prototype.cacheLength=function LazyUint8Array_cacheLength(){var xhr=new XMLHttpRequest;xhr.open("HEAD",url,false);xhr.send(null);if(!(xhr.status>=200&&xhr.status<300||xhr.status===304))throw new Error("Couldn't load "+url+". Status: "+xhr.status);var datalength=Number(xhr.getResponseHeader("Content-length"));var header;var hasByteServing=(header=xhr.getResponseHeader("Accept-Ranges"))&&header==="bytes";var usesGzip=(header=xhr.getResponseHeader("Content-Encoding"))&&header==="gzip";var chunkSize=1024*1024;if(!hasByteServing)chunkSize=datalength;var doXHR=(from,to)=>{if(from>to)throw new Error("invalid range ("+from+", "+to+") or no bytes requested!");if(to>datalength-1)throw new Error("only "+datalength+" bytes available! programmer error!");var xhr=new XMLHttpRequest;xhr.open("GET",url,false);if(datalength!==chunkSize)xhr.setRequestHeader("Range","bytes="+from+"-"+to);xhr.responseType="arraybuffer";if(xhr.overrideMimeType){xhr.overrideMimeType("text/plain; charset=x-user-defined")}xhr.send(null);if(!(xhr.status>=200&&xhr.status<300||xhr.status===304))throw new Error("Couldn't load "+url+". Status: "+xhr.status);if(xhr.response!==undefined){return new Uint8Array(xhr.response||[])}else{return intArrayFromString(xhr.responseText||"",true)}};var lazyArray=this;lazyArray.setDataGetter(chunkNum=>{var start=chunkNum*chunkSize;var end=(chunkNum+1)*chunkSize-1;end=Math.min(end,datalength-1);if(typeof lazyArray.chunks[chunkNum]=="undefined"){lazyArray.chunks[chunkNum]=doXHR(start,end)}if(typeof lazyArray.chunks[chunkNum]=="undefined")throw new Error("doXHR failed!");return lazyArray.chunks[chunkNum]});if(usesGzip||!datalength){chunkSize=datalength=1;datalength=this.getter(0).length;chunkSize=datalength;out("LazyFiles on gzip forces download of the whole file when length is accessed")}this._length=datalength;this._chunkSize=chunkSize;this.lengthKnown=true};if(typeof XMLHttpRequest!="undefined"){if(!ENVIRONMENT_IS_WORKER)throw"Cannot do synchronous binary XHRs outside webworkers in modern browsers. Use --embed-file or --preload-file in emcc";var lazyArray=new LazyUint8Array;Object.defineProperties(lazyArray,{length:{get:function(){if(!this.lengthKnown){this.cacheLength()}return this._length}},chunkSize:{get:function(){if(!this.lengthKnown){this.cacheLength()}return this._chunkSize}}});var properties={isDevice:false,contents:lazyArray}}else{var properties={isDevice:false,url:url}}var node=FS.createFile(parent,name,properties,canRead,canWrite);if(properties.contents){node.contents=properties.contents}else if(properties.url){node.contents=null;node.url=properties.url}Object.defineProperties(node,{usedBytes:{get:function(){return this.contents.length}}});var stream_ops={};var keys=Object.keys(node.stream_ops);keys.forEach(key=>{var fn=node.stream_ops[key];stream_ops[key]=function forceLoadLazyFile(){FS.forceLoadFile(node);return fn.apply(null,arguments)}});stream_ops.read=((stream,buffer,offset,length,position)=>{FS.forceLoadFile(node);var contents=stream.node.contents;if(position>=contents.length)return 0;var size=Math.min(contents.length-position,length);if(contents.slice){for(var i=0;i<size;i++){buffer[offset+i]=contents[position+i]}}else{for(var i=0;i<size;i++){buffer[offset+i]=contents.get(position+i)}}return size});node.stream_ops=stream_ops;return node},createPreloadedFile:(parent,name,url,canRead,canWrite,onload,onerror,dontCreateFile,canOwn,preFinish)=>{var fullname=name?PATH_FS.resolve(PATH.join2(parent,name)):parent;var dep=getUniqueRunDependency("cp "+fullname);function processData(byteArray){function finish(byteArray){if(preFinish)preFinish();if(!dontCreateFile){FS.createDataFile(parent,name,byteArray,canRead,canWrite,canOwn)}if(onload)onload();removeRunDependency(dep)}if(Browser.handledByPreloadPlugin(byteArray,fullname,finish,()=>{if(onerror)onerror();removeRunDependency(dep)})){return}finish(byteArray)}addRunDependency(dep);if(typeof url=="string"){asyncLoad(url,byteArray=>processData(byteArray),onerror)}else{processData(url)}},indexedDB:()=>{return window.indexedDB||window.mozIndexedDB||window.webkitIndexedDB||window.msIndexedDB},DB_NAME:()=>{return"EM_FS_"+window.location.pathname},DB_VERSION:20,DB_STORE_NAME:"FILE_DATA",saveFilesToDB:(paths,onload,onerror)=>{onload=onload||(()=>{});onerror=onerror||(()=>{});var indexedDB=FS.indexedDB();try{var openRequest=indexedDB.open(FS.DB_NAME(),FS.DB_VERSION)}catch(e){return onerror(e)}openRequest.onupgradeneeded=(()=>{out("creating db");var db=openRequest.result;db.createObjectStore(FS.DB_STORE_NAME)});openRequest.onsuccess=(()=>{var db=openRequest.result;var transaction=db.transaction([FS.DB_STORE_NAME],"readwrite");var files=transaction.objectStore(FS.DB_STORE_NAME);var ok=0,fail=0,total=paths.length;function finish(){if(fail==0)onload();else onerror()}paths.forEach(path=>{var putRequest=files.put(FS.analyzePath(path).object.contents,path);putRequest.onsuccess=(()=>{ok++;if(ok+fail==total)finish()});putRequest.onerror=(()=>{fail++;if(ok+fail==total)finish()})});transaction.onerror=onerror});openRequest.onerror=onerror},loadFilesFromDB:(paths,onload,onerror)=>{onload=onload||(()=>{});onerror=onerror||(()=>{});var indexedDB=FS.indexedDB();try{var openRequest=indexedDB.open(FS.DB_NAME(),FS.DB_VERSION)}catch(e){return onerror(e)}openRequest.onupgradeneeded=onerror;openRequest.onsuccess=(()=>{var db=openRequest.result;try{var transaction=db.transaction([FS.DB_STORE_NAME],"readonly")}catch(e){onerror(e);return}var files=transaction.objectStore(FS.DB_STORE_NAME);var ok=0,fail=0,total=paths.length;function finish(){if(fail==0)onload();else onerror()}paths.forEach(path=>{var getRequest=files.get(path);getRequest.onsuccess=(()=>{if(FS.analyzePath(path).exists){FS.unlink(path)}FS.createDataFile(PATH.dirname(path),PATH.basename(path),getRequest.result,true,true,true);ok++;if(ok+fail==total)finish()});getRequest.onerror=(()=>{fail++;if(ok+fail==total)finish()})});transaction.onerror=onerror});openRequest.onerror=onerror}};Module["FS"]=FS;var SYSCALLS={DEFAULT_POLLMASK:5,calculateAt:function(dirfd,path,allowEmpty){if(path[0]==="/"){return path}var dir;if(dirfd===-100){dir=FS.cwd()}else{var dirstream=FS.getStream(dirfd);if(!dirstream)throw new FS.ErrnoError(8);dir=dirstream.path}if(path.length==0){if(!allowEmpty){throw new FS.ErrnoError(44)}return dir}return PATH.join2(dir,path)},doStat:function(func,path,buf){try{var stat=func(path)}catch(e){if(e&&e.node&&PATH.normalize(path)!==PATH.normalize(FS.getPath(e.node))){return-54}throw e}HEAP32[buf>>2]=stat.dev;HEAP32[buf+4>>2]=0;HEAP32[buf+8>>2]=stat.ino;HEAP32[buf+12>>2]=stat.mode;HEAP32[buf+16>>2]=stat.nlink;HEAP32[buf+20>>2]=stat.uid;HEAP32[buf+24>>2]=stat.gid;HEAP32[buf+28>>2]=stat.rdev;HEAP32[buf+32>>2]=0;tempI64=[stat.size>>>0,(tempDouble=stat.size,+Math.abs(tempDouble)>=1?tempDouble>0?(Math.min(+Math.floor(tempDouble/4294967296),4294967295)|0)>>>0:~~+Math.ceil((tempDouble-+(~~tempDouble>>>0))/4294967296)>>>0:0)],HEAP32[buf+40>>2]=tempI64[0],HEAP32[buf+44>>2]=tempI64[1];HEAP32[buf+48>>2]=4096;HEAP32[buf+52>>2]=stat.blocks;HEAP32[buf+56>>2]=stat.atime.getTime()/1e3|0;HEAP32[buf+60>>2]=0;HEAP32[buf+64>>2]=stat.mtime.getTime()/1e3|0;HEAP32[buf+68>>2]=0;HEAP32[buf+72>>2]=stat.ctime.getTime()/1e3|0;HEAP32[buf+76>>2]=0;tempI64=[stat.ino>>>0,(tempDouble=stat.ino,+Math.abs(tempDouble)>=1?tempDouble>0?(Math.min(+Math.floor(tempDouble/4294967296),4294967295)|0)>>>0:~~+Math.ceil((tempDouble-+(~~tempDouble>>>0))/4294967296)>>>0:0)],HEAP32[buf+80>>2]=tempI64[0],HEAP32[buf+84>>2]=tempI64[1];return 0},doMsync:function(addr,stream,len,flags,offset){var buffer=HEAPU8.slice(addr,addr+len);FS.msync(stream,buffer,offset,len,flags)},doMkdir:function(path,mode){path=PATH.normalize(path);if(path[path.length-1]==="/")path=path.substr(0,path.length-1);FS.mkdir(path,mode,0);return 0},doMknod:function(path,mode,dev){switch(mode&61440){case 32768:case 8192:case 24576:case 4096:case 49152:break;default:return-28}FS.mknod(path,mode,dev);return 0},doReadlink:function(path,buf,bufsize){if(bufsize<=0)return-28;var ret=FS.readlink(path);var len=Math.min(bufsize,lengthBytesUTF8(ret));var endChar=HEAP8[buf+len];stringToUTF8(ret,buf,bufsize+1);HEAP8[buf+len]=endChar;return len},doAccess:function(path,amode){if(amode&~7){return-28}var lookup=FS.lookupPath(path,{follow:true});var node=lookup.node;if(!node){return-44}var perms="";if(amode&4)perms+="r";if(amode&2)perms+="w";if(amode&1)perms+="x";if(perms&&FS.nodePermissions(node,perms)){return-2}return 0},doDup:function(path,flags,suggestFD){var suggest=FS.getStream(suggestFD);if(suggest)FS.close(suggest);return FS.open(path,flags,0,suggestFD,suggestFD).fd},doReadv:function(stream,iov,iovcnt,offset){var ret=0;for(var i=0;i<iovcnt;i++){var ptr=HEAP32[iov+i*8>>2];var len=HEAP32[iov+(i*8+4)>>2];var curr=FS.read(stream,HEAP8,ptr,len,offset);if(curr<0)return-1;ret+=curr;if(curr<len)break}return ret},doWritev:function(stream,iov,iovcnt,offset){var ret=0;for(var i=0;i<iovcnt;i++){var ptr=HEAP32[iov+i*8>>2];var len=HEAP32[iov+(i*8+4)>>2];var curr=FS.write(stream,HEAP8,ptr,len,offset);if(curr<0)return-1;ret+=curr}return ret},varargs:undefined,get:function(){SYSCALLS.varargs+=4;var ret=HEAP32[SYSCALLS.varargs-4>>2];return ret},getStr:function(ptr){var ret=UTF8ToString(ptr);return ret},getStreamFromFD:function(fd){var stream=FS.getStream(fd);if(!stream)throw new FS.ErrnoError(8);return stream},get64:function(low,high){return low}};Module["SYSCALLS"]=SYSCALLS;function ___syscall_fcntl64(fd,cmd,varargs){SYSCALLS.varargs=varargs;try{var stream=SYSCALLS.getStreamFromFD(fd);switch(cmd){case 0:{var arg=SYSCALLS.get();if(arg<0){return-28}var newStream;newStream=FS.open(stream.path,stream.flags,0,arg);return newStream.fd}case 1:case 2:return 0;case 3:return stream.flags;case 4:{var arg=SYSCALLS.get();stream.flags|=arg;return 0}case 5:{var arg=SYSCALLS.get();var offset=0;HEAP16[arg+offset>>1]=2;return 0}case 6:case 7:return 0;case 16:case 8:return-28;case 9:setErrNo(28);return-1;default:{return-28}}}catch(e){if(typeof FS=="undefined"||!(e instanceof FS.ErrnoError))throw e;return-e.errno}}Module["___syscall_fcntl64"]=___syscall_fcntl64;function ___syscall_ftruncate64(fd,low,high){try{var length=SYSCALLS.get64(low,high);FS.ftruncate(fd,length);return 0}catch(e){if(typeof FS=="undefined"||!(e instanceof FS.ErrnoError))throw e;return-e.errno}}Module["___syscall_ftruncate64"]=___syscall_ftruncate64;function ___syscall_ioctl(fd,op,varargs){SYSCALLS.varargs=varargs;try{var stream=SYSCALLS.getStreamFromFD(fd);switch(op){case 21509:case 21505:{if(!stream.tty)return-59;return 0}case 21510:case 21511:case 21512:case 21506:case 21507:case 21508:{if(!stream.tty)return-59;return 0}case 21519:{if(!stream.tty)return-59;var argp=SYSCALLS.get();HEAP32[argp>>2]=0;return 0}case 21520:{if(!stream.tty)return-59;return-28}case 21531:{var argp=SYSCALLS.get();return FS.ioctl(stream,op,argp)}case 21523:{if(!stream.tty)return-59;return 0}case 21524:{if(!stream.tty)return-59;return 0}default:abort("bad ioctl syscall "+op)}}catch(e){if(typeof FS=="undefined"||!(e instanceof FS.ErrnoError))throw e;return-e.errno}}Module["___syscall_ioctl"]=___syscall_ioctl;function ___syscall_open(path,flags,varargs){SYSCALLS.varargs=varargs;try{var pathname=SYSCALLS.getStr(path);var mode=varargs?SYSCALLS.get():0;var stream=FS.open(pathname,flags,mode);return stream.fd}catch(e){if(typeof FS=="undefined"||!(e instanceof FS.ErrnoError))throw e;return-e.errno}}Module["___syscall_open"]=___syscall_open;function __localtime_js(time,tmPtr){var date=new Date(HEAP32[time>>2]*1e3);HEAP32[tmPtr>>2]=date.getSeconds();HEAP32[tmPtr+4>>2]=date.getMinutes();HEAP32[tmPtr+8>>2]=date.getHours();HEAP32[tmPtr+12>>2]=date.getDate();HEAP32[tmPtr+16>>2]=date.getMonth();HEAP32[tmPtr+20>>2]=date.getFullYear()-1900;HEAP32[tmPtr+24>>2]=date.getDay();var start=new Date(date.getFullYear(),0,1);var yday=(date.getTime()-start.getTime())/(1e3*60*60*24)|0;HEAP32[tmPtr+28>>2]=yday;HEAP32[tmPtr+36>>2]=-(date.getTimezoneOffset()*60);var summerOffset=new Date(date.getFullYear(),6,1).getTimezoneOffset();var winterOffset=start.getTimezoneOffset();var dst=(summerOffset!=winterOffset&&date.getTimezoneOffset()==Math.min(winterOffset,summerOffset))|0;HEAP32[tmPtr+32>>2]=dst}Module["__localtime_js"]=__localtime_js;function _tzset_impl(timezone,daylight,tzname){var currentYear=(new Date).getFullYear();var winter=new Date(currentYear,0,1);var summer=new Date(currentYear,6,1);var winterOffset=winter.getTimezoneOffset();var summerOffset=summer.getTimezoneOffset();var stdTimezoneOffset=Math.max(winterOffset,summerOffset);HEAP32[timezone>>2]=stdTimezoneOffset*60;HEAP32[daylight>>2]=Number(winterOffset!=summerOffset);function extractZone(date){var match=date.toTimeString().match(/\(([A-Za-z ]+)\)$/);return match?match[1]:"GMT"}var winterName=extractZone(winter);var summerName=extractZone(summer);var winterNamePtr=allocateUTF8(winterName);var summerNamePtr=allocateUTF8(summerName);if(summerOffset<winterOffset){HEAP32[tzname>>2]=winterNamePtr;HEAP32[tzname+4>>2]=summerNamePtr}else{HEAP32[tzname>>2]=summerNamePtr;HEAP32[tzname+4>>2]=winterNamePtr}}Module["_tzset_impl"]=_tzset_impl;function __tzset_js(timezone,daylight,tzname){if(__tzset_js.called)return;__tzset_js.called=true;_tzset_impl(timezone,daylight,tzname)}Module["__tzset_js"]=__tzset_js;function _abort(){abort("")}Module["_abort"]=_abort;var readAsmConstArgsArray=[];Module["readAsmConstArgsArray"]=readAsmConstArgsArray;function readAsmConstArgs(sigPtr,buf){readAsmConstArgsArray.length=0;var ch;buf>>=2;while(ch=HEAPU8[sigPtr++]){var readAsmConstArgsDouble=ch<105;if(readAsmConstArgsDouble&&buf&1)buf++;readAsmConstArgsArray.push(readAsmConstArgsDouble?HEAPF64[buf++>>1]:HEAP32[buf]);++buf}return readAsmConstArgsArray}Module["readAsmConstArgs"]=readAsmConstArgs;function _emscripten_asm_const_int(code,sigPtr,argbuf){var args=readAsmConstArgs(sigPtr,argbuf);return ASM_CONSTS[code].apply(null,args)}Module["_emscripten_asm_const_int"]=_emscripten_asm_const_int;function _emscripten_memcpy_big(dest,src,num){HEAPU8.copyWithin(dest,src,src+num)}Module["_emscripten_memcpy_big"]=_emscripten_memcpy_big;function _emscripten_get_heap_max(){return HEAPU8.length}Module["_emscripten_get_heap_max"]=_emscripten_get_heap_max;function abortOnCannotGrowMemory(requestedSize){abort("OOM")}Module["abortOnCannotGrowMemory"]=abortOnCannotGrowMemory;function _emscripten_resize_heap(requestedSize){var oldSize=HEAPU8.length;requestedSize=requestedSize>>>0;abortOnCannotGrowMemory(requestedSize)}Module["_emscripten_resize_heap"]=_emscripten_resize_heap;function _emscripten_run_script(ptr){eval(UTF8ToString(ptr))}Module["_emscripten_run_script"]=_emscripten_run_script;var ENV={};Module["ENV"]=ENV;function getExecutableName(){return thisProgram||"./this.program"}Module["getExecutableName"]=getExecutableName;function getEnvStrings(){if(!getEnvStrings.strings){var lang=(typeof navigator=="object"&&navigator.languages&&navigator.languages[0]||"C").replace("-","_")+".UTF-8";var env={"USER":"web_user","LOGNAME":"web_user","PATH":"/","PWD":"/","HOME":"/home/web_user","LANG":lang,"_":getExecutableName()};for(var x in ENV){if(ENV[x]===undefined)delete env[x];else env[x]=ENV[x]}var strings=[];for(var x in env){strings.push(x+"="+env[x])}getEnvStrings.strings=strings}return getEnvStrings.strings}Module["getEnvStrings"]=getEnvStrings;function _environ_get(__environ,environ_buf){var bufSize=0;getEnvStrings().forEach(function(string,i){var ptr=environ_buf+bufSize;HEAP32[__environ+i*4>>2]=ptr;writeAsciiToMemory(string,ptr);bufSize+=string.length+1});return 0}Module["_environ_get"]=_environ_get;function _environ_sizes_get(penviron_count,penviron_buf_size){var strings=getEnvStrings();HEAP32[penviron_count>>2]=strings.length;var bufSize=0;strings.forEach(function(string){bufSize+=string.length+1});HEAP32[penviron_buf_size>>2]=bufSize;return 0}Module["_environ_sizes_get"]=_environ_sizes_get;function _fd_close(fd){try{var stream=SYSCALLS.getStreamFromFD(fd);FS.close(stream);return 0}catch(e){if(typeof FS=="undefined"||!(e instanceof FS.ErrnoError))throw e;return e.errno}}Module["_fd_close"]=_fd_close;function _fd_read(fd,iov,iovcnt,pnum){try{var stream=SYSCALLS.getStreamFromFD(fd);var num=SYSCALLS.doReadv(stream,iov,iovcnt);HEAP32[pnum>>2]=num;return 0}catch(e){if(typeof FS=="undefined"||!(e instanceof FS.ErrnoError))throw e;return e.errno}}Module["_fd_read"]=_fd_read;function _fd_seek(fd,offset_low,offset_high,whence,newOffset){try{var stream=SYSCALLS.getStreamFromFD(fd);var HIGH_OFFSET=4294967296;var offset=offset_high*HIGH_OFFSET+(offset_low>>>0);var DOUBLE_LIMIT=9007199254740992;if(offset<=-DOUBLE_LIMIT||offset>=DOUBLE_LIMIT){return-61}FS.llseek(stream,offset,whence);tempI64=[stream.position>>>0,(tempDouble=stream.position,+Math.abs(tempDouble)>=1?tempDouble>0?(Math.min(+Math.floor(tempDouble/4294967296),4294967295)|0)>>>0:~~+Math.ceil((tempDouble-+(~~tempDouble>>>0))/4294967296)>>>0:0)],HEAP32[newOffset>>2]=tempI64[0],HEAP32[newOffset+4>>2]=tempI64[1];if(stream.getdents&&offset===0&&whence===0)stream.getdents=null;return 0}catch(e){if(typeof FS=="undefined"||!(e instanceof FS.ErrnoError))throw e;return e.errno}}Module["_fd_seek"]=_fd_seek;function _fd_write(fd,iov,iovcnt,pnum){try{var stream=SYSCALLS.getStreamFromFD(fd);var num=SYSCALLS.doWritev(stream,iov,iovcnt);HEAP32[pnum>>2]=num;return 0}catch(e){if(typeof FS=="undefined"||!(e instanceof FS.ErrnoError))throw e;return e.errno}}Module["_fd_write"]=_fd_write;function _setTempRet0(val){setTempRet0(val)}Module["_setTempRet0"]=_setTempRet0;function __isLeapYear(year){return year%4===0&&(year%100!==0||year%400===0)}Module["__isLeapYear"]=__isLeapYear;function __arraySum(array,index){var sum=0;for(var i=0;i<=index;sum+=array[i++]){}return sum}Module["__arraySum"]=__arraySum;var __MONTH_DAYS_LEAP=[31,29,31,30,31,30,31,31,30,31,30,31];Module["__MONTH_DAYS_LEAP"]=__MONTH_DAYS_LEAP;var __MONTH_DAYS_REGULAR=[31,28,31,30,31,30,31,31,30,31,30,31];Module["__MONTH_DAYS_REGULAR"]=__MONTH_DAYS_REGULAR;function __addDays(date,days){var newDate=new Date(date.getTime());while(days>0){var leap=__isLeapYear(newDate.getFullYear());var currentMonth=newDate.getMonth();var daysInCurrentMonth=(leap?__MONTH_DAYS_LEAP:__MONTH_DAYS_REGULAR)[currentMonth];if(days>daysInCurrentMonth-newDate.getDate()){days-=daysInCurrentMonth-newDate.getDate()+1;newDate.setDate(1);if(currentMonth<11){newDate.setMonth(currentMonth+1)}else{newDate.setMonth(0);newDate.setFullYear(newDate.getFullYear()+1)}}else{newDate.setDate(newDate.getDate()+days);return newDate}}return newDate}Module["__addDays"]=__addDays;function _strftime(s,maxsize,format,tm){var tm_zone=HEAP32[tm+40>>2];var date={tm_sec:HEAP32[tm>>2],tm_min:HEAP32[tm+4>>2],tm_hour:HEAP32[tm+8>>2],tm_mday:HEAP32[tm+12>>2],tm_mon:HEAP32[tm+16>>2],tm_year:HEAP32[tm+20>>2],tm_wday:HEAP32[tm+24>>2],tm_yday:HEAP32[tm+28>>2],tm_isdst:HEAP32[tm+32>>2],tm_gmtoff:HEAP32[tm+36>>2],tm_zone:tm_zone?UTF8ToString(tm_zone):""};var pattern=UTF8ToString(format);var EXPANSION_RULES_1={"%c":"%a %b %d %H:%M:%S %Y","%D":"%m/%d/%y","%F":"%Y-%m-%d","%h":"%b","%r":"%I:%M:%S %p","%R":"%H:%M","%T":"%H:%M:%S","%x":"%m/%d/%y","%X":"%H:%M:%S","%Ec":"%c","%EC":"%C","%Ex":"%m/%d/%y","%EX":"%H:%M:%S","%Ey":"%y","%EY":"%Y","%Od":"%d","%Oe":"%e","%OH":"%H","%OI":"%I","%Om":"%m","%OM":"%M","%OS":"%S","%Ou":"%u","%OU":"%U","%OV":"%V","%Ow":"%w","%OW":"%W","%Oy":"%y"};for(var rule in EXPANSION_RULES_1){pattern=pattern.replace(new RegExp(rule,"g"),EXPANSION_RULES_1[rule])}var WEEKDAYS=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];var MONTHS=["January","February","March","April","May","June","July","August","September","October","November","December"];function leadingSomething(value,digits,character){var str=typeof value=="number"?value.toString():value||"";while(str.length<digits){str=character[0]+str}return str}function leadingNulls(value,digits){return leadingSomething(value,digits,"0")}function compareByDay(date1,date2){function sgn(value){return value<0?-1:value>0?1:0}var compare;if((compare=sgn(date1.getFullYear()-date2.getFullYear()))===0){if((compare=sgn(date1.getMonth()-date2.getMonth()))===0){compare=sgn(date1.getDate()-date2.getDate())}}return compare}function getFirstWeekStartDate(janFourth){switch(janFourth.getDay()){case 0:return new Date(janFourth.getFullYear()-1,11,29);case 1:return janFourth;case 2:return new Date(janFourth.getFullYear(),0,3);case 3:return new Date(janFourth.getFullYear(),0,2);case 4:return new Date(janFourth.getFullYear(),0,1);case 5:return new Date(janFourth.getFullYear()-1,11,31);case 6:return new Date(janFourth.getFullYear()-1,11,30)}}function getWeekBasedYear(date){var thisDate=__addDays(new Date(date.tm_year+1900,0,1),date.tm_yday);var janFourthThisYear=new Date(thisDate.getFullYear(),0,4);var janFourthNextYear=new Date(thisDate.getFullYear()+1,0,4);var firstWeekStartThisYear=getFirstWeekStartDate(janFourthThisYear);var firstWeekStartNextYear=getFirstWeekStartDate(janFourthNextYear);if(compareByDay(firstWeekStartThisYear,thisDate)<=0){if(compareByDay(firstWeekStartNextYear,thisDate)<=0){return thisDate.getFullYear()+1}else{return thisDate.getFullYear()}}else{return thisDate.getFullYear()-1}}var EXPANSION_RULES_2={"%a":function(date){return WEEKDAYS[date.tm_wday].substring(0,3)},"%A":function(date){return WEEKDAYS[date.tm_wday]},"%b":function(date){return MONTHS[date.tm_mon].substring(0,3)},"%B":function(date){return MONTHS[date.tm_mon]},"%C":function(date){var year=date.tm_year+1900;return leadingNulls(year/100|0,2)},"%d":function(date){return leadingNulls(date.tm_mday,2)},"%e":function(date){return leadingSomething(date.tm_mday,2," ")},"%g":function(date){return getWeekBasedYear(date).toString().substring(2)},"%G":function(date){return getWeekBasedYear(date)},"%H":function(date){return leadingNulls(date.tm_hour,2)},"%I":function(date){var twelveHour=date.tm_hour;if(twelveHour==0)twelveHour=12;else if(twelveHour>12)twelveHour-=12;return leadingNulls(twelveHour,2)},"%j":function(date){return leadingNulls(date.tm_mday+__arraySum(__isLeapYear(date.tm_year+1900)?__MONTH_DAYS_LEAP:__MONTH_DAYS_REGULAR,date.tm_mon-1),3)},"%m":function(date){return leadingNulls(date.tm_mon+1,2)},"%M":function(date){return leadingNulls(date.tm_min,2)},"%n":function(){return"\n"},"%p":function(date){if(date.tm_hour>=0&&date.tm_hour<12){return"AM"}else{return"PM"}},"%S":function(date){return leadingNulls(date.tm_sec,2)},"%t":function(){return"\t"},"%u":function(date){return date.tm_wday||7},"%U":function(date){var janFirst=new Date(date.tm_year+1900,0,1);var firstSunday=janFirst.getDay()===0?janFirst:__addDays(janFirst,7-janFirst.getDay());var endDate=new Date(date.tm_year+1900,date.tm_mon,date.tm_mday);if(compareByDay(firstSunday,endDate)<0){var februaryFirstUntilEndMonth=__arraySum(__isLeapYear(endDate.getFullYear())?__MONTH_DAYS_LEAP:__MONTH_DAYS_REGULAR,endDate.getMonth()-1)-31;var firstSundayUntilEndJanuary=31-firstSunday.getDate();var days=firstSundayUntilEndJanuary+februaryFirstUntilEndMonth+endDate.getDate();return leadingNulls(Math.ceil(days/7),2)}return compareByDay(firstSunday,janFirst)===0?"01":"00"},"%V":function(date){var janFourthThisYear=new Date(date.tm_year+1900,0,4);var janFourthNextYear=new Date(date.tm_year+1901,0,4);var firstWeekStartThisYear=getFirstWeekStartDate(janFourthThisYear);var firstWeekStartNextYear=getFirstWeekStartDate(janFourthNextYear);var endDate=__addDays(new Date(date.tm_year+1900,0,1),date.tm_yday);if(compareByDay(endDate,firstWeekStartThisYear)<0){return"53"}if(compareByDay(firstWeekStartNextYear,endDate)<=0){return"01"}var daysDifference;if(firstWeekStartThisYear.getFullYear()<date.tm_year+1900){daysDifference=date.tm_yday+32-firstWeekStartThisYear.getDate()}else{daysDifference=date.tm_yday+1-firstWeekStartThisYear.getDate()}return leadingNulls(Math.ceil(daysDifference/7),2)},"%w":function(date){return date.tm_wday},"%W":function(date){var janFirst=new Date(date.tm_year,0,1);var firstMonday=janFirst.getDay()===1?janFirst:__addDays(janFirst,janFirst.getDay()===0?1:7-janFirst.getDay()+1);var endDate=new Date(date.tm_year+1900,date.tm_mon,date.tm_mday);if(compareByDay(firstMonday,endDate)<0){var februaryFirstUntilEndMonth=__arraySum(__isLeapYear(endDate.getFullYear())?__MONTH_DAYS_LEAP:__MONTH_DAYS_REGULAR,endDate.getMonth()-1)-31;var firstMondayUntilEndJanuary=31-firstMonday.getDate();var days=firstMondayUntilEndJanuary+februaryFirstUntilEndMonth+endDate.getDate();return leadingNulls(Math.ceil(days/7),2)}return compareByDay(firstMonday,janFirst)===0?"01":"00"},"%y":function(date){return(date.tm_year+1900).toString().substring(2)},"%Y":function(date){return date.tm_year+1900},"%z":function(date){var off=date.tm_gmtoff;var ahead=off>=0;off=Math.abs(off)/60;off=off/60*100+off%60;return(ahead?"+":"-")+String("0000"+off).slice(-4)},"%Z":function(date){return date.tm_zone},"%%":function(){return"%"}};pattern=pattern.replace(/%%/g,"\0\0");for(var rule in EXPANSION_RULES_2){if(pattern.includes(rule)){pattern=pattern.replace(new RegExp(rule,"g"),EXPANSION_RULES_2[rule](date))}}pattern=pattern.replace(/\0\0/g,"%");var bytes=intArrayFromString(pattern,false);if(bytes.length>maxsize){return 0}writeArrayToMemory(bytes,s);return bytes.length-1}Module["_strftime"]=_strftime;function _strftime_l(s,maxsize,format,tm){return _strftime(s,maxsize,format,tm)}Module["_strftime_l"]=_strftime_l;function _time(ptr){var ret=Date.now()/1e3|0;if(ptr){HEAP32[ptr>>2]=ret}return ret}Module["_time"]=_time;var FSNode=function(parent,name,mode,rdev){if(!parent){parent=this}this.parent=parent;this.mount=parent.mount;this.mounted=null;this.id=FS.nextInode++;this.name=name;this.mode=mode;this.node_ops={};this.stream_ops={};this.rdev=rdev};var readMode=292|73;var writeMode=146;Object.defineProperties(FSNode.prototype,{read:{get:function(){return(this.mode&readMode)===readMode},set:function(val){val?this.mode|=readMode:this.mode&=~readMode}},write:{get:function(){return(this.mode&writeMode)===writeMode},set:function(val){val?this.mode|=writeMode:this.mode&=~writeMode}},isFolder:{get:function(){return FS.isDir(this.mode)}},isDevice:{get:function(){return FS.isChrdev(this.mode)}}});FS.FSNode=FSNode;FS.staticInit();function intArrayFromString(stringy,dontAddNull,length){var len=length>0?length:lengthBytesUTF8(stringy)+1;var u8array=new Array(len);var numBytesWritten=stringToUTF8Array(stringy,u8array,0,u8array.length);if(dontAddNull)u8array.length=numBytesWritten;return u8array}var asmLibraryArg={"a":___assert_fail,"c":___cxa_allocate_exception,"b":___cxa_throw,"h":___syscall_fcntl64,"w":___syscall_ftruncate64,"v":___syscall_ioctl,"u":___syscall_open,"p":__localtime_js,"o":__tzset_js,"f":_abort,"n":_emscripten_asm_const_int,"m":_emscripten_memcpy_big,"d":_emscripten_resize_heap,"e":_emscripten_run_script,"t":_environ_get,"s":_environ_sizes_get,"g":_fd_close,"r":_fd_read,"l":_fd_seek,"q":_fd_write,"k":_setTempRet0,"j":_strftime_l,"i":_time};var asm=createWasm();var ___wasm_call_ctors=Module["___wasm_call_ctors"]=function(){return(___wasm_call_ctors=Module["___wasm_call_ctors"]=Module["asm"]["y"]).apply(null,arguments)};var _malloc=Module["_malloc"]=function(){return(_malloc=Module["_malloc"]=Module["asm"]["z"]).apply(null,arguments)};var _realloc=Module["_realloc"]=function(){return(_realloc=Module["_realloc"]=Module["asm"]["A"]).apply(null,arguments)};var _setSampleRate=Module["_setSampleRate"]=function(){return(_setSampleRate=Module["_setSampleRate"]=Module["asm"]["B"]).apply(null,arguments)};var _main=Module["_main"]=function(){return(_main=Module["_main"]=Module["asm"]["C"]).apply(null,arguments)};var _prepareRomBuffer=Module["_prepareRomBuffer"]=function(){return(_prepareRomBuffer=Module["_prepareRomBuffer"]=Module["asm"]["D"]).apply(null,arguments)};var _getSymbol=Module["_getSymbol"]=function(){return(_getSymbol=Module["_getSymbol"]=Module["asm"]["E"]).apply(null,arguments)};var _loadROM=Module["_loadROM"]=function(){return(_loadROM=Module["_loadROM"]=Module["asm"]["F"]).apply(null,arguments)};var _savGetSize=Module["_savGetSize"]=function(){return(_savGetSize=Module["_savGetSize"]=Module["asm"]["G"]).apply(null,arguments)};var _savGetPointer=Module["_savGetPointer"]=function(){return(_savGetPointer=Module["_savGetPointer"]=Module["asm"]["H"]).apply(null,arguments)};var _savUpdateChangeFlag=Module["_savUpdateChangeFlag"]=function(){return(_savUpdateChangeFlag=Module["_savUpdateChangeFlag"]=Module["asm"]["I"]).apply(null,arguments)};var _runFrame=Module["_runFrame"]=function(){return(_runFrame=Module["_runFrame"]=Module["asm"]["J"]).apply(null,arguments)};var _fillAudioBuffer=Module["_fillAudioBuffer"]=function(){return(_fillAudioBuffer=Module["_fillAudioBuffer"]=Module["asm"]["K"]).apply(null,arguments)};var _zlibCompress=Module["_zlibCompress"]=function(){return(_zlibCompress=Module["_zlibCompress"]=Module["asm"]["L"]).apply(null,arguments)};var _zlibDecompress=Module["_zlibDecompress"]=function(){return(_zlibDecompress=Module["_zlibDecompress"]=Module["asm"]["M"]).apply(null,arguments)};var _chtGetList=Module["_chtGetList"]=function(){return(_chtGetList=Module["_chtGetList"]=Module["asm"]["N"]).apply(null,arguments)};var _chtAddItem=Module["_chtAddItem"]=function(){return(_chtAddItem=Module["_chtAddItem"]=Module["asm"]["O"]).apply(null,arguments)};var _utilStrLen=Module["_utilStrLen"]=function(){return(_utilStrLen=Module["_utilStrLen"]=Module["asm"]["P"]).apply(null,arguments)};var _micWriteSamples=Module["_micWriteSamples"]=function(){return(_micWriteSamples=Module["_micWriteSamples"]=Module["asm"]["Q"]).apply(null,arguments)};var ___errno_location=Module["___errno_location"]=function(){return(___errno_location=Module["___errno_location"]=Module["asm"]["R"]).apply(null,arguments)};var _htons=Module["_htons"]=function(){return(_htons=Module["_htons"]=Module["asm"]["T"]).apply(null,arguments)};var stackSave=Module["stackSave"]=function(){return(stackSave=Module["stackSave"]=Module["asm"]["U"]).apply(null,arguments)};var stackRestore=Module["stackRestore"]=function(){return(stackRestore=Module["stackRestore"]=Module["asm"]["V"]).apply(null,arguments)};var stackAlloc=Module["stackAlloc"]=function(){return(stackAlloc=Module["stackAlloc"]=Module["asm"]["W"]).apply(null,arguments)};var dynCall_jiji=Module["dynCall_jiji"]=function(){return(dynCall_jiji=Module["dynCall_jiji"]=Module["asm"]["X"]).apply(null,arguments)};var dynCall_viijii=Module["dynCall_viijii"]=function(){return(dynCall_viijii=Module["dynCall_viijii"]=Module["asm"]["Y"]).apply(null,arguments)};var dynCall_iiiiij=Module["dynCall_iiiiij"]=function(){return(dynCall_iiiiij=Module["dynCall_iiiiij"]=Module["asm"]["Z"]).apply(null,arguments)};var dynCall_iiiiijj=Module["dynCall_iiiiijj"]=function(){return(dynCall_iiiiijj=Module["dynCall_iiiiijj"]=Module["asm"]["_"]).apply(null,arguments)};var dynCall_iiiiiijj=Module["dynCall_iiiiiijj"]=function(){return(dynCall_iiiiiijj=Module["dynCall_iiiiiijj"]=Module["asm"]["$"]).apply(null,arguments)};Module["UTF8ToString"]=UTF8ToString;var calledRun;function ExitStatus(status){this.name="ExitStatus";this.message="Program terminated with exit("+status+")";this.status=status}var calledMain=false;dependenciesFulfilled=function runCaller(){if(!calledRun)run();if(!calledRun)dependenciesFulfilled=runCaller};function callMain(args){var entryFunction=Module["_main"];var argc=0;var argv=0;try{var ret=entryFunction(argc,argv);exit(ret,true);return ret}catch(e){return handleException(e)}finally{calledMain=true}}function run(args){args=args||arguments_;if(runDependencies>0){return}preRun();if(runDependencies>0){return}function doRun(){if(calledRun)return;calledRun=true;Module["calledRun"]=true;if(ABORT)return;initRuntime();preMain();if(Module["onRuntimeInitialized"])Module["onRuntimeInitialized"]();if(shouldRunNow)callMain(args);postRun()}if(Module["setStatus"]){Module["setStatus"]("Running...");setTimeout(function(){setTimeout(function(){Module["setStatus"]("")},1);doRun()},1)}else{doRun()}}Module["run"]=run;function exit(status,implicit){EXITSTATUS=status;if(keepRuntimeAlive()){}else{exitRuntime()}procExit(status)}function procExit(code){EXITSTATUS=code;if(!keepRuntimeAlive()){if(Module["onExit"])Module["onExit"](code);ABORT=true}quit_(code,new ExitStatus(code))}if(Module["preInit"]){if(typeof Module["preInit"]=="function")Module["preInit"]=[Module["preInit"]];while(Module["preInit"].length>0){Module["preInit"].pop()()}}var shouldRunNow=true;if(Module["noInitialRun"])shouldRunNow=false;run();
+        function f(r) {
+            function f(r) {
+                l && l(), u || FS.createDataFile(e, t, r, n, o, s), a && a(), removeRunDependency(d)
+            }
+            Browser.handledByPreloadPlugin(r, c, f, () => {
+                i && i(), removeRunDependency(d)
+            }) || f(r)
+        }
+        addRunDependency(d), "string" == typeof r ? asyncLoad(r, e => f(e), i) : f(r)
+    },
+    indexedDB: () => window.indexedDB || window.mozIndexedDB || window.webkitIndexedDB || window.msIndexedDB,
+    DB_NAME: () => "EM_FS_" + window.location.pathname,
+    DB_VERSION: 20,
+    DB_STORE_NAME: "FILE_DATA",
+    saveFilesToDB: (e, t, r) => {
+        t = t || (() => {}), r = r || (() => {});
+        var n = FS.indexedDB();
+        try {
+            var o = n.open(FS.DB_NAME(), FS.DB_VERSION)
+        } catch (e) {
+            return r(e)
+        }
+        o.onupgradeneeded = (() => {
+            out("creating db"), o.result.createObjectStore(FS.DB_STORE_NAME)
+        }), o.onsuccess = (() => {
+            var n = o.result.transaction([FS.DB_STORE_NAME], "readwrite"),
+                a = n.objectStore(FS.DB_STORE_NAME),
+                i = 0,
+                u = 0,
+                s = e.length;
+
+            function l() {
+                0 == u ? t() : r()
+            }
+            e.forEach(e => {
+                var t = a.put(FS.analyzePath(e).object.contents, e);
+                t.onsuccess = (() => {
+                    ++i + u == s && l()
+                }), t.onerror = (() => {
+                    i + ++u == s && l()
+                })
+            }), n.onerror = r
+        }), o.onerror = r
+    },
+    loadFilesFromDB: (e, t, r) => {
+        t = t || (() => {}), r = r || (() => {});
+        var n = FS.indexedDB();
+        try {
+            var o = n.open(FS.DB_NAME(), FS.DB_VERSION)
+        } catch (e) {
+            return r(e)
+        }
+        o.onupgradeneeded = r, o.onsuccess = (() => {
+            var n = o.result;
+            try {
+                var a = n.transaction([FS.DB_STORE_NAME], "readonly")
+            } catch (e) {
+                return void r(e)
+            }
+            var i = a.objectStore(FS.DB_STORE_NAME),
+                u = 0,
+                s = 0,
+                l = e.length;
+
+            function c() {
+                0 == s ? t() : r()
+            }
+            e.forEach(e => {
+                var t = i.get(e);
+                t.onsuccess = (() => {
+                    FS.analyzePath(e).exists && FS.unlink(e), FS.createDataFile(PATH.dirname(e), PATH.basename(e), t.result, !0, !0, !0), ++u + s == l && c()
+                }), t.onerror = (() => {
+                    u + ++s == l && c()
+                })
+            }), a.onerror = r
+        }), o.onerror = r
+    }
+};
+Module.FS = FS;
+var SYSCALLS = {
+    DEFAULT_POLLMASK: 5,
+    calculateAt: function(e, t, r) {
+        if ("/" === t[0]) return t;
+        var n;
+        if (-100 === e) n = FS.cwd();
+        else {
+            var o = FS.getStream(e);
+            if (!o) throw new FS.ErrnoError(8);
+            n = o.path
+        }
+        if (0 == t.length) {
+            if (!r) throw new FS.ErrnoError(44);
+            return n
+        }
+        return PATH.join2(n, t)
+    },
+    doStat: function(e, t, r) {
+        try {
+            var n = e(t)
+        } catch (e) {
+            if (e && e.node && PATH.normalize(t) !== PATH.normalize(FS.getPath(e.node))) return -54;
+            throw e
+        }
+        return HEAP32[r >> 2] = n.dev, HEAP32[r + 4 >> 2] = 0, HEAP32[r + 8 >> 2] = n.ino, HEAP32[r + 12 >> 2] = n.mode, HEAP32[r + 16 >> 2] = n.nlink, HEAP32[r + 20 >> 2] = n.uid, HEAP32[r + 24 >> 2] = n.gid, HEAP32[r + 28 >> 2] = n.rdev, HEAP32[r + 32 >> 2] = 0, tempI64 = [n.size >>> 0, (tempDouble = n.size, +Math.abs(tempDouble) >= 1 ? tempDouble > 0 ? (0 | Math.min(+Math.floor(tempDouble / 4294967296), 4294967295)) >>> 0 : ~~+Math.ceil((tempDouble - +(~~tempDouble >>> 0)) / 4294967296) >>> 0 : 0)], HEAP32[r + 40 >> 2] = tempI64[0], HEAP32[r + 44 >> 2] = tempI64[1], HEAP32[r + 48 >> 2] = 4096, HEAP32[r + 52 >> 2] = n.blocks, HEAP32[r + 56 >> 2] = n.atime.getTime() / 1e3 | 0, HEAP32[r + 60 >> 2] = 0, HEAP32[r + 64 >> 2] = n.mtime.getTime() / 1e3 | 0, HEAP32[r + 68 >> 2] = 0, HEAP32[r + 72 >> 2] = n.ctime.getTime() / 1e3 | 0, HEAP32[r + 76 >> 2] = 0, tempI64 = [n.ino >>> 0, (tempDouble = n.ino, +Math.abs(tempDouble) >= 1 ? tempDouble > 0 ? (0 | Math.min(+Math.floor(tempDouble / 4294967296), 4294967295)) >>> 0 : ~~+Math.ceil((tempDouble - +(~~tempDouble >>> 0)) / 4294967296) >>> 0 : 0)], HEAP32[r + 80 >> 2] = tempI64[0], HEAP32[r + 84 >> 2] = tempI64[1], 0
+    },
+    doMsync: function(e, t, r, n, o) {
+        var a = HEAPU8.slice(e, e + r);
+        FS.msync(t, a, o, r, n)
+    },
+    doMkdir: function(e, t) {
+        return "/" === (e = PATH.normalize(e))[e.length - 1] && (e = e.substr(0, e.length - 1)), FS.mkdir(e, t, 0), 0
+    },
+    doMknod: function(e, t, r) {
+        switch (61440 & t) {
+            case 32768:
+            case 8192:
+            case 24576:
+            case 4096:
+            case 49152:
+                break;
+            default:
+                return -28
+        }
+        return FS.mknod(e, t, r), 0
+    },
+    doReadlink: function(e, t, r) {
+        if (r <= 0) return -28;
+        var n = FS.readlink(e),
+            o = Math.min(r, lengthBytesUTF8(n)),
+            a = HEAP8[t + o];
+        return stringToUTF8(n, t, r + 1), HEAP8[t + o] = a, o
+    },
+    doAccess: function(e, t) {
+        if (-8 & t) return -28;
+        var r = FS.lookupPath(e, {
+            follow: !0
+        }).node;
+        if (!r) return -44;
+        var n = "";
+        return 4 & t && (n += "r"), 2 & t && (n += "w"), 1 & t && (n += "x"), n && FS.nodePermissions(r, n) ? -2 : 0
+    },
+    doDup: function(e, t, r) {
+        var n = FS.getStream(r);
+        return n && FS.close(n), FS.open(e, t, 0, r, r).fd
+    },
+    doReadv: function(e, t, r, n) {
+        for (var o = 0, a = 0; a < r; a++) {
+            var i = HEAP32[t + 8 * a >> 2],
+                u = HEAP32[t + (8 * a + 4) >> 2],
+                s = FS.read(e, HEAP8, i, u, n);
+            if (s < 0) return -1;
+            if (o += s, s < u) break
+        }
+        return o
+    },
+    doWritev: function(e, t, r, n) {
+        for (var o = 0, a = 0; a < r; a++) {
+            var i = HEAP32[t + 8 * a >> 2],
+                u = HEAP32[t + (8 * a + 4) >> 2],
+                s = FS.write(e, HEAP8, i, u, n);
+            if (s < 0) return -1;
+            o += s
+        }
+        return o
+    },
+    varargs: void 0,
+    get: function() {
+        return SYSCALLS.varargs += 4, HEAP32[SYSCALLS.varargs - 4 >> 2]
+    },
+    getStr: function(e) {
+        return UTF8ToString(e)
+    },
+    getStreamFromFD: function(e) {
+        var t = FS.getStream(e);
+        if (!t) throw new FS.ErrnoError(8);
+        return t
+    },
+    get64: function(e, t) {
+        return e
+    }
+};
+
+function ___syscall_fcntl64(e, t, r) {
+    SYSCALLS.varargs = r;
+    try {
+        var n = SYSCALLS.getStreamFromFD(e);
+        switch (t) {
+            case 0:
+                return (o = SYSCALLS.get()) < 0 ? -28 : FS.open(n.path, n.flags, 0, o).fd;
+            case 1:
+            case 2:
+                return 0;
+            case 3:
+                return n.flags;
+            case 4:
+                var o = SYSCALLS.get();
+                return n.flags |= o, 0;
+            case 5:
+                o = SYSCALLS.get();
+                return HEAP16[o + 0 >> 1] = 2, 0;
+            case 6:
+            case 7:
+                return 0;
+            case 16:
+            case 8:
+                return -28;
+            case 9:
+                return setErrNo(28), -1;
+            default:
+                return -28
+        }
+    } catch (e) {
+        if (void 0 === FS || !(e instanceof FS.ErrnoError)) throw e;
+        return -e.errno
+    }
+}
+
+function ___syscall_ftruncate64(e, t, r) {
+    try {
+        var n = SYSCALLS.get64(t, r);
+        return FS.ftruncate(e, n), 0
+    } catch (e) {
+        if (void 0 === FS || !(e instanceof FS.ErrnoError)) throw e;
+        return -e.errno
+    }
+}
+
+function ___syscall_ioctl(e, t, r) {
+    SYSCALLS.varargs = r;
+    try {
+        var n = SYSCALLS.getStreamFromFD(e);
+        switch (t) {
+            case 21509:
+            case 21505:
+                return n.tty ? 0 : -59;
+            case 21510:
+            case 21511:
+            case 21512:
+            case 21506:
+            case 21507:
+            case 21508:
+                return n.tty ? 0 : -59;
+            case 21519:
+                if (!n.tty) return -59;
+                var o = SYSCALLS.get();
+                return HEAP32[o >> 2] = 0, 0;
+            case 21520:
+                return n.tty ? -28 : -59;
+            case 21531:
+                o = SYSCALLS.get();
+                return FS.ioctl(n, t, o);
+            case 21523:
+            case 21524:
+                return n.tty ? 0 : -59;
+            default:
+                abort("bad ioctl syscall " + t)
+        }
+    } catch (e) {
+        if (void 0 === FS || !(e instanceof FS.ErrnoError)) throw e;
+        return -e.errno
+    }
+}
+
+function ___syscall_open(e, t, r) {
+    SYSCALLS.varargs = r;
+    try {
+        var n = SYSCALLS.getStr(e),
+            o = r ? SYSCALLS.get() : 0;
+        return FS.open(n, t, o).fd
+    } catch (e) {
+        if (void 0 === FS || !(e instanceof FS.ErrnoError)) throw e;
+        return -e.errno
+    }
+}
+
+function __localtime_js(e, t) {
+    var r = new Date(1e3 * HEAP32[e >> 2]);
+    HEAP32[t >> 2] = r.getSeconds(), HEAP32[t + 4 >> 2] = r.getMinutes(), HEAP32[t + 8 >> 2] = r.getHours(), HEAP32[t + 12 >> 2] = r.getDate(), HEAP32[t + 16 >> 2] = r.getMonth(), HEAP32[t + 20 >> 2] = r.getFullYear() - 1900, HEAP32[t + 24 >> 2] = r.getDay();
+    var n = new Date(r.getFullYear(), 0, 1),
+        o = (r.getTime() - n.getTime()) / 864e5 | 0;
+    HEAP32[t + 28 >> 2] = o, HEAP32[t + 36 >> 2] = -60 * r.getTimezoneOffset();
+    var a = new Date(r.getFullYear(), 6, 1).getTimezoneOffset(),
+        i = n.getTimezoneOffset(),
+        u = 0 | (a != i && r.getTimezoneOffset() == Math.min(i, a));
+    HEAP32[t + 32 >> 2] = u
+}
+
+function _tzset_impl(e, t, r) {
+    var n = (new Date).getFullYear(),
+        o = new Date(n, 0, 1),
+        a = new Date(n, 6, 1),
+        i = o.getTimezoneOffset(),
+        u = a.getTimezoneOffset(),
+        s = Math.max(i, u);
+
+    function l(e) {
+        var t = e.toTimeString().match(/\(([A-Za-z ]+)\)$/);
+        return t ? t[1] : "GMT"
+    }
+    HEAP32[e >> 2] = 60 * s, HEAP32[t >> 2] = Number(i != u);
+    var c = l(o),
+        d = l(a),
+        f = allocateUTF8(c),
+        m = allocateUTF8(d);
+    u < i ? (HEAP32[r >> 2] = f, HEAP32[r + 4 >> 2] = m) : (HEAP32[r >> 2] = m, HEAP32[r + 4 >> 2] = f)
+}
+
+function __tzset_js(e, t, r) {
+    __tzset_js.called || (__tzset_js.called = !0, _tzset_impl(e, t, r))
+}
+
+function _abort() {
+    abort("")
+}
+Module.SYSCALLS = SYSCALLS, Module.___syscall_fcntl64 = ___syscall_fcntl64, Module.___syscall_ftruncate64 = ___syscall_ftruncate64, Module.___syscall_ioctl = ___syscall_ioctl, Module.___syscall_open = ___syscall_open, Module.__localtime_js = __localtime_js, Module._tzset_impl = _tzset_impl, Module.__tzset_js = __tzset_js, Module._abort = _abort;
+var readAsmConstArgsArray = [];
+
+function readAsmConstArgs(e, t) {
+    var r;
+    for (readAsmConstArgsArray.length = 0, t >>= 2; r = HEAPU8[e++];) {
+        var n = r < 105;
+        n && 1 & t && t++, readAsmConstArgsArray.push(n ? HEAPF64[t++ >> 1] : HEAP32[t]), ++t
+    }
+    return readAsmConstArgsArray
+}
+
+function _emscripten_asm_const_int(e, t, r) {
+    var n = readAsmConstArgs(t, r);
+    return ASM_CONSTS[e].apply(null, n)
+}
+
+function _emscripten_memcpy_big(e, t, r) {
+    HEAPU8.copyWithin(e, t, t + r)
+}
+
+function _emscripten_get_heap_max() {
+    return HEAPU8.length
+}
+
+function abortOnCannotGrowMemory(e) {
+    abort("OOM")
+}
+
+function _emscripten_resize_heap(e) {
+    HEAPU8.length;
+    abortOnCannotGrowMemory(e >>>= 0)
+}
+
+function _emscripten_run_script(ptr) {
+    eval(UTF8ToString(ptr))
+}
+Module.readAsmConstArgsArray = readAsmConstArgsArray, Module.readAsmConstArgs = readAsmConstArgs, Module._emscripten_asm_const_int = _emscripten_asm_const_int, Module._emscripten_memcpy_big = _emscripten_memcpy_big, Module._emscripten_get_heap_max = _emscripten_get_heap_max, Module.abortOnCannotGrowMemory = abortOnCannotGrowMemory, Module._emscripten_resize_heap = _emscripten_resize_heap, Module._emscripten_run_script = _emscripten_run_script;
+var ENV = {};
+
+function getExecutableName() {
+    return thisProgram || "./this.program"
+}
+
+function getEnvStrings() {
+    if (!getEnvStrings.strings) {
+        var e = {
+            USER: "web_user",
+            LOGNAME: "web_user",
+            PATH: "/",
+            PWD: "/",
+            HOME: "/home/web_user",
+            LANG: ("object" == typeof navigator && navigator.languages && navigator.languages[0] || "C").replace("-", "_") + ".UTF-8",
+            _: getExecutableName()
+        };
+        for (var t in ENV) void 0 === ENV[t] ? delete e[t] : e[t] = ENV[t];
+        var r = [];
+        for (var t in e) r.push(t + "=" + e[t]);
+        getEnvStrings.strings = r
+    }
+    return getEnvStrings.strings
+}
+
+function _environ_get(e, t) {
+    var r = 0;
+    return getEnvStrings().forEach(function(n, o) {
+        var a = t + r;
+        HEAP32[e + 4 * o >> 2] = a, writeAsciiToMemory(n, a), r += n.length + 1
+    }), 0
+}
+
+function _environ_sizes_get(e, t) {
+    var r = getEnvStrings();
+    HEAP32[e >> 2] = r.length;
+    var n = 0;
+    return r.forEach(function(e) {
+        n += e.length + 1
+    }), HEAP32[t >> 2] = n, 0
+}
+
+function _fd_close(e) {
+    try {
+        var t = SYSCALLS.getStreamFromFD(e);
+        return FS.close(t), 0
+    } catch (e) {
+        if (void 0 === FS || !(e instanceof FS.ErrnoError)) throw e;
+        return e.errno
+    }
+}
+
+function _fd_read(e, t, r, n) {
+    try {
+        var o = SYSCALLS.getStreamFromFD(e),
+            a = SYSCALLS.doReadv(o, t, r);
+        return HEAP32[n >> 2] = a, 0
+    } catch (e) {
+        if (void 0 === FS || !(e instanceof FS.ErrnoError)) throw e;
+        return e.errno
+    }
+}
+
+function _fd_seek(e, t, r, n, o) {
+    try {
+        var a = SYSCALLS.getStreamFromFD(e),
+            i = 4294967296 * r + (t >>> 0);
+        return i <= -9007199254740992 || i >= 9007199254740992 ? -61 : (FS.llseek(a, i, n), tempI64 = [a.position >>> 0, (tempDouble = a.position, +Math.abs(tempDouble) >= 1 ? tempDouble > 0 ? (0 | Math.min(+Math.floor(tempDouble / 4294967296), 4294967295)) >>> 0 : ~~+Math.ceil((tempDouble - +(~~tempDouble >>> 0)) / 4294967296) >>> 0 : 0)], HEAP32[o >> 2] = tempI64[0], HEAP32[o + 4 >> 2] = tempI64[1], a.getdents && 0 === i && 0 === n && (a.getdents = null), 0)
+    } catch (e) {
+        if (void 0 === FS || !(e instanceof FS.ErrnoError)) throw e;
+        return e.errno
+    }
+}
+
+function _fd_write(e, t, r, n) {
+    try {
+        var o = SYSCALLS.getStreamFromFD(e),
+            a = SYSCALLS.doWritev(o, t, r);
+        return HEAP32[n >> 2] = a, 0
+    } catch (e) {
+        if (void 0 === FS || !(e instanceof FS.ErrnoError)) throw e;
+        return e.errno
+    }
+}
+
+function _setTempRet0(e) {
+    setTempRet0(e)
+}
+
+function __isLeapYear(e) {
+    return e % 4 == 0 && (e % 100 != 0 || e % 400 == 0)
+}
+
+function __arraySum(e, t) {
+    for (var r = 0, n = 0; n <= t; r += e[n++]);
+    return r
+}
+Module.ENV = ENV, Module.getExecutableName = getExecutableName, Module.getEnvStrings = getEnvStrings, Module._environ_get = _environ_get, Module._environ_sizes_get = _environ_sizes_get, Module._fd_close = _fd_close, Module._fd_read = _fd_read, Module._fd_seek = _fd_seek, Module._fd_write = _fd_write, Module._setTempRet0 = _setTempRet0, Module.__isLeapYear = __isLeapYear, Module.__arraySum = __arraySum;
+var __MONTH_DAYS_LEAP = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+Module.__MONTH_DAYS_LEAP = __MONTH_DAYS_LEAP;
+var __MONTH_DAYS_REGULAR = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+function __addDays(e, t) {
+    for (var r = new Date(e.getTime()); t > 0;) {
+        var n = __isLeapYear(r.getFullYear()),
+            o = r.getMonth(),
+            a = (n ? __MONTH_DAYS_LEAP : __MONTH_DAYS_REGULAR)[o];
+        if (!(t > a - r.getDate())) return r.setDate(r.getDate() + t), r;
+        t -= a - r.getDate() + 1, r.setDate(1), o < 11 ? r.setMonth(o + 1) : (r.setMonth(0), r.setFullYear(r.getFullYear() + 1))
+    }
+    return r
+}
+
+function _strftime(e, t, r, n) {
+    var o = HEAP32[n + 40 >> 2],
+        a = {
+            tm_sec: HEAP32[n >> 2],
+            tm_min: HEAP32[n + 4 >> 2],
+            tm_hour: HEAP32[n + 8 >> 2],
+            tm_mday: HEAP32[n + 12 >> 2],
+            tm_mon: HEAP32[n + 16 >> 2],
+            tm_year: HEAP32[n + 20 >> 2],
+            tm_wday: HEAP32[n + 24 >> 2],
+            tm_yday: HEAP32[n + 28 >> 2],
+            tm_isdst: HEAP32[n + 32 >> 2],
+            tm_gmtoff: HEAP32[n + 36 >> 2],
+            tm_zone: o ? UTF8ToString(o) : ""
+        },
+        i = UTF8ToString(r),
+        u = {
+            "%c": "%a %b %d %H:%M:%S %Y",
+            "%D": "%m/%d/%y",
+            "%F": "%Y-%m-%d",
+            "%h": "%b",
+            "%r": "%I:%M:%S %p",
+            "%R": "%H:%M",
+            "%T": "%H:%M:%S",
+            "%x": "%m/%d/%y",
+            "%X": "%H:%M:%S",
+            "%Ec": "%c",
+            "%EC": "%C",
+            "%Ex": "%m/%d/%y",
+            "%EX": "%H:%M:%S",
+            "%Ey": "%y",
+            "%EY": "%Y",
+            "%Od": "%d",
+            "%Oe": "%e",
+            "%OH": "%H",
+            "%OI": "%I",
+            "%Om": "%m",
+            "%OM": "%M",
+            "%OS": "%S",
+            "%Ou": "%u",
+            "%OU": "%U",
+            "%OV": "%V",
+            "%Ow": "%w",
+            "%OW": "%W",
+            "%Oy": "%y"
+        };
+    for (var s in u) i = i.replace(new RegExp(s, "g"), u[s]);
+    var l = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"],
+        c = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+    function d(e, t, r) {
+        for (var n = "number" == typeof e ? e.toString() : e || ""; n.length < t;) n = r[0] + n;
+        return n
+    }
+
+    function f(e, t) {
+        return d(e, t, "0")
+    }
+
+    function m(e, t) {
+        function r(e) {
+            return e < 0 ? -1 : e > 0 ? 1 : 0
+        }
+        var n;
+        return 0 === (n = r(e.getFullYear() - t.getFullYear())) && 0 === (n = r(e.getMonth() - t.getMonth())) && (n = r(e.getDate() - t.getDate())), n
+    }
+
+    function p(e) {
+        switch (e.getDay()) {
+            case 0:
+                return new Date(e.getFullYear() - 1, 11, 29);
+            case 1:
+                return e;
+            case 2:
+                return new Date(e.getFullYear(), 0, 3);
+            case 3:
+                return new Date(e.getFullYear(), 0, 2);
+            case 4:
+                return new Date(e.getFullYear(), 0, 1);
+            case 5:
+                return new Date(e.getFullYear() - 1, 11, 31);
+            case 6:
+                return new Date(e.getFullYear() - 1, 11, 30)
+        }
+    }
+
+    function h(e) {
+        var t = __addDays(new Date(e.tm_year + 1900, 0, 1), e.tm_yday),
+            r = new Date(t.getFullYear(), 0, 4),
+            n = new Date(t.getFullYear() + 1, 0, 4),
+            o = p(r),
+            a = p(n);
+        return m(o, t) <= 0 ? m(a, t) <= 0 ? t.getFullYear() + 1 : t.getFullYear() : t.getFullYear() - 1
+    }
+    var _ = {
+        "%a": function(e) {
+            return l[e.tm_wday].substring(0, 3)
+        },
+        "%A": function(e) {
+            return l[e.tm_wday]
+        },
+        "%b": function(e) {
+            return c[e.tm_mon].substring(0, 3)
+        },
+        "%B": function(e) {
+            return c[e.tm_mon]
+        },
+        "%C": function(e) {
+            return f((e.tm_year + 1900) / 100 | 0, 2)
+        },
+        "%d": function(e) {
+            return f(e.tm_mday, 2)
+        },
+        "%e": function(e) {
+            return d(e.tm_mday, 2, " ")
+        },
+        "%g": function(e) {
+            return h(e).toString().substring(2)
+        },
+        "%G": function(e) {
+            return h(e)
+        },
+        "%H": function(e) {
+            return f(e.tm_hour, 2)
+        },
+        "%I": function(e) {
+            var t = e.tm_hour;
+            return 0 == t ? t = 12 : t > 12 && (t -= 12), f(t, 2)
+        },
+        "%j": function(e) {
+            return f(e.tm_mday + __arraySum(__isLeapYear(e.tm_year + 1900) ? __MONTH_DAYS_LEAP : __MONTH_DAYS_REGULAR, e.tm_mon - 1), 3)
+        },
+        "%m": function(e) {
+            return f(e.tm_mon + 1, 2)
+        },
+        "%M": function(e) {
+            return f(e.tm_min, 2)
+        },
+        "%n": function() {
+            return "\n"
+        },
+        "%p": function(e) {
+            return e.tm_hour >= 0 && e.tm_hour < 12 ? "AM" : "PM"
+        },
+        "%S": function(e) {
+            return f(e.tm_sec, 2)
+        },
+        "%t": function() {
+            return "\t"
+        },
+        "%u": function(e) {
+            return e.tm_wday || 7
+        },
+        "%U": function(e) {
+            var t = new Date(e.tm_year + 1900, 0, 1),
+                r = 0 === t.getDay() ? t : __addDays(t, 7 - t.getDay()),
+                n = new Date(e.tm_year + 1900, e.tm_mon, e.tm_mday);
+            if (m(r, n) < 0) {
+                var o = __arraySum(__isLeapYear(n.getFullYear()) ? __MONTH_DAYS_LEAP : __MONTH_DAYS_REGULAR, n.getMonth() - 1) - 31,
+                    a = 31 - r.getDate() + o + n.getDate();
+                return f(Math.ceil(a / 7), 2)
+            }
+            return 0 === m(r, t) ? "01" : "00"
+        },
+        "%V": function(e) {
+            var t, r = new Date(e.tm_year + 1900, 0, 4),
+                n = new Date(e.tm_year + 1901, 0, 4),
+                o = p(r),
+                a = p(n),
+                i = __addDays(new Date(e.tm_year + 1900, 0, 1), e.tm_yday);
+            return m(i, o) < 0 ? "53" : m(a, i) <= 0 ? "01" : (t = o.getFullYear() < e.tm_year + 1900 ? e.tm_yday + 32 - o.getDate() : e.tm_yday + 1 - o.getDate(), f(Math.ceil(t / 7), 2))
+        },
+        "%w": function(e) {
+            return e.tm_wday
+        },
+        "%W": function(e) {
+            var t = new Date(e.tm_year, 0, 1),
+                r = 1 === t.getDay() ? t : __addDays(t, 0 === t.getDay() ? 1 : 7 - t.getDay() + 1),
+                n = new Date(e.tm_year + 1900, e.tm_mon, e.tm_mday);
+            if (m(r, n) < 0) {
+                var o = __arraySum(__isLeapYear(n.getFullYear()) ? __MONTH_DAYS_LEAP : __MONTH_DAYS_REGULAR, n.getMonth() - 1) - 31,
+                    a = 31 - r.getDate() + o + n.getDate();
+                return f(Math.ceil(a / 7), 2)
+            }
+            return 0 === m(r, t) ? "01" : "00"
+        },
+        "%y": function(e) {
+            return (e.tm_year + 1900).toString().substring(2)
+        },
+        "%Y": function(e) {
+            return e.tm_year + 1900
+        },
+        "%z": function(e) {
+            var t = e.tm_gmtoff,
+                r = t >= 0;
+            return t = (t = Math.abs(t) / 60) / 60 * 100 + t % 60, (r ? "+" : "-") + String("0000" + t).slice(-4)
+        },
+        "%Z": function(e) {
+            return e.tm_zone
+        },
+        "%%": function() {
+            return "%"
+        }
+    };
+    for (var s in i = i.replace(/%%/g, "\0\0"), _) i.includes(s) && (i = i.replace(new RegExp(s, "g"), _[s](a)));
+    var v = intArrayFromString(i = i.replace(/\0\0/g, "%"), !1);
+    return v.length > t ? 0 : (writeArrayToMemory(v, e), v.length - 1)
+}
+
+function _strftime_l(e, t, r, n) {
+    return _strftime(e, t, r, n)
+}
+
+function _time(e) {
+    var t = Date.now() / 1e3 | 0;
+    return e && (HEAP32[e >> 2] = t), t
+}
+Module.__MONTH_DAYS_REGULAR = __MONTH_DAYS_REGULAR, Module.__addDays = __addDays, Module._strftime = _strftime, Module._strftime_l = _strftime_l, Module._time = _time;
+var FSNode = function(e, t, r, n) {
+        e || (e = this), this.parent = e, this.mount = e.mount, this.mounted = null, this.id = FS.nextInode++, this.name = t, this.mode = r, this.node_ops = {}, this.stream_ops = {}, this.rdev = n
+    },
+    readMode = 365,
+    writeMode = 146;
+
+function intArrayFromString(e, t, r) {
+    var n = r > 0 ? r : lengthBytesUTF8(e) + 1,
+        o = new Array(n),
+        a = stringToUTF8Array(e, o, 0, o.length);
+    return t && (o.length = a), o
+}
+Object.defineProperties(FSNode.prototype, {
+    read: {
+        get: function() {
+            return (this.mode & readMode) === readMode
+        },
+        set: function(e) {
+            e ? this.mode |= readMode : this.mode &= ~readMode
+        }
+    },
+    write: {
+        get: function() {
+            return (this.mode & writeMode) === writeMode
+        },
+        set: function(e) {
+            e ? this.mode |= writeMode : this.mode &= ~writeMode
+        }
+    },
+    isFolder: {
+        get: function() {
+            return FS.isDir(this.mode)
+        }
+    },
+    isDevice: {
+        get: function() {
+            return FS.isChrdev(this.mode)
+        }
+    }
+}), FS.FSNode = FSNode, FS.staticInit();
+var asmLibraryArg = {
+        a: ___assert_fail,
+        c: ___cxa_allocate_exception,
+        b: ___cxa_throw,
+        h: ___syscall_fcntl64,
+        w: ___syscall_ftruncate64,
+        v: ___syscall_ioctl,
+        u: ___syscall_open,
+        p: __localtime_js,
+        o: __tzset_js,
+        f: _abort,
+        n: _emscripten_asm_const_int,
+        m: _emscripten_memcpy_big,
+        d: _emscripten_resize_heap,
+        e: _emscripten_run_script,
+        t: _environ_get,
+        s: _environ_sizes_get,
+        g: _fd_close,
+        r: _fd_read,
+        l: _fd_seek,
+        q: _fd_write,
+        k: _setTempRet0,
+        j: _strftime_l,
+        i: _time
+    },
+    asm = createWasm(),
+    ___wasm_call_ctors = Module.___wasm_call_ctors = function() {
+        return (___wasm_call_ctors = Module.___wasm_call_ctors = Module.asm.y).apply(null, arguments)
+    },
+    _malloc = Module._malloc = function() {
+        return (_malloc = Module._malloc = Module.asm.z).apply(null, arguments)
+    },
+    _realloc = Module._realloc = function() {
+        return (_realloc = Module._realloc = Module.asm.A).apply(null, arguments)
+    },
+    _setSampleRate = Module._setSampleRate = function() {
+        return (_setSampleRate = Module._setSampleRate = Module.asm.B).apply(null, arguments)
+    },
+    _main = Module._main = function() {
+        return (_main = Module._main = Module.asm.C).apply(null, arguments)
+    },
+    _prepareRomBuffer = Module._prepareRomBuffer = function() {
+        return (_prepareRomBuffer = Module._prepareRomBuffer = Module.asm.D).apply(null, arguments)
+    },
+    _getSymbol = Module._getSymbol = function() {
+        return (_getSymbol = Module._getSymbol = Module.asm.E).apply(null, arguments)
+    },
+    _loadROM = Module._loadROM = function() {
+        return (_loadROM = Module._loadROM = Module.asm.F).apply(null, arguments)
+    },
+    _savGetSize = Module._savGetSize = function() {
+        return (_savGetSize = Module._savGetSize = Module.asm.G).apply(null, arguments)
+    },
+    _savGetPointer = Module._savGetPointer = function() {
+        return (_savGetPointer = Module._savGetPointer = Module.asm.H).apply(null, arguments)
+    },
+    _savUpdateChangeFlag = Module._savUpdateChangeFlag = function() {
+        return (_savUpdateChangeFlag = Module._savUpdateChangeFlag = Module.asm.I).apply(null, arguments)
+    },
+    _runFrame = Module._runFrame = function() {
+        return (_runFrame = Module._runFrame = Module.asm.J).apply(null, arguments)
+    },
+    _fillAudioBuffer = Module._fillAudioBuffer = function() {
+        return (_fillAudioBuffer = Module._fillAudioBuffer = Module.asm.K).apply(null, arguments)
+    },
+    _zlibCompress = Module._zlibCompress = function() {
+        return (_zlibCompress = Module._zlibCompress = Module.asm.L).apply(null, arguments)
+    },
+    _zlibDecompress = Module._zlibDecompress = function() {
+        return (_zlibDecompress = Module._zlibDecompress = Module.asm.M).apply(null, arguments)
+    },
+    _chtGetList = Module._chtGetList = function() {
+        return (_chtGetList = Module._chtGetList = Module.asm.N).apply(null, arguments)
+    },
+    _chtAddItem = Module._chtAddItem = function() {
+        return (_chtAddItem = Module._chtAddItem = Module.asm.O).apply(null, arguments)
+    },
+    _utilStrLen = Module._utilStrLen = function() {
+        return (_utilStrLen = Module._utilStrLen = Module.asm.P).apply(null, arguments)
+    },
+    _micWriteSamples = Module._micWriteSamples = function() {
+        return (_micWriteSamples = Module._micWriteSamples = Module.asm.Q).apply(null, arguments)
+    },
+    ___errno_location = Module.___errno_location = function() {
+        return (___errno_location = Module.___errno_location = Module.asm.R).apply(null, arguments)
+    },
+    _htons = Module._htons = function() {
+        return (_htons = Module._htons = Module.asm.T).apply(null, arguments)
+    },
+    stackSave = Module.stackSave = function() {
+        return (stackSave = Module.stackSave = Module.asm.U).apply(null, arguments)
+    },
+    stackRestore = Module.stackRestore = function() {
+        return (stackRestore = Module.stackRestore = Module.asm.V).apply(null, arguments)
+    },
+    stackAlloc = Module.stackAlloc = function() {
+        return (stackAlloc = Module.stackAlloc = Module.asm.W).apply(null, arguments)
+    },
+    dynCall_jiji = Module.dynCall_jiji = function() {
+        return (dynCall_jiji = Module.dynCall_jiji = Module.asm.X).apply(null, arguments)
+    },
+    dynCall_viijii = Module.dynCall_viijii = function() {
+        return (dynCall_viijii = Module.dynCall_viijii = Module.asm.Y).apply(null, arguments)
+    },
+    dynCall_iiiiij = Module.dynCall_iiiiij = function() {
+        return (dynCall_iiiiij = Module.dynCall_iiiiij = Module.asm.Z).apply(null, arguments)
+    },
+    dynCall_iiiiijj = Module.dynCall_iiiiijj = function() {
+        return (dynCall_iiiiijj = Module.dynCall_iiiiijj = Module.asm._).apply(null, arguments)
+    },
+    dynCall_iiiiiijj = Module.dynCall_iiiiiijj = function() {
+        return (dynCall_iiiiiijj = Module.dynCall_iiiiiijj = Module.asm.$).apply(null, arguments)
+    },
+    calledRun;
+
+function ExitStatus(e) {
+    this.name = "ExitStatus", this.message = "Program terminated with exit(" + e + ")", this.status = e
+}
+Module.UTF8ToString = UTF8ToString;
+var calledMain = !1;
+
+function callMain(e) {
+    var t = Module._main;
+    try {
+        var r = t(0, 0);
+        return exit(r, !0), r
+    } catch (e) {
+        return handleException(e)
+    } finally {
+        calledMain = !0
+    }
+}
+
+function run(e) {
+    function t() {
+        calledRun || (calledRun = !0, Module.calledRun = !0, ABORT || (initRuntime(), preMain(), Module.onRuntimeInitialized && Module.onRuntimeInitialized(), shouldRunNow && callMain(e), postRun()))
+    }
+    e = e || arguments_, runDependencies > 0 || (preRun(), runDependencies > 0 || (Module.setStatus ? (Module.setStatus("Running..."), setTimeout(function() {
+        setTimeout(function() {
+            Module.setStatus("")
+        }, 1), t()
+    }, 1)) : t()))
+}
+
+function exit(e, t) {
+    EXITSTATUS = e, keepRuntimeAlive() || exitRuntime(), procExit(e)
+}
+
+function procExit(e) {
+    EXITSTATUS = e, keepRuntimeAlive() || (Module.onExit && Module.onExit(e), ABORT = !0), quit_(e, new ExitStatus(e))
+}
+if (dependenciesFulfilled = function e() {
+        calledRun || run(), calledRun || (dependenciesFulfilled = e)
+    }, Module.run = run, Module.preInit)
+    for ("function" == typeof Module.preInit && (Module.preInit = [Module.preInit]); Module.preInit.length > 0;) Module.preInit.pop()();
+var shouldRunNow = !0;
+Module.noInitialRun && (shouldRunNow = !1), run();
