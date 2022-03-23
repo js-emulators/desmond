@@ -21,9 +21,7 @@ curl https://raw.githubusercontent.com/js-emulators/desmond/main/installer.sh | 
     <desmond-player id="player"></desmond-player>
     <script src="node_modules/desmond-emu/desmond.min.js"></script>
     <script>
-     window.onload = function(){
     document.getElementById("player").loadURL("path-to-game.nds");
-     }
     </script>
   </body>
 </html>
