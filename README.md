@@ -29,17 +29,17 @@ curl https://raw.githubusercontent.com/js-emulators/desmond/main/installer.sh | 
 </html>
 ```
 # Run function after load
-To run a function after the file loads, you may attach a function as the second argument.
+To run a function after the file loads, you may attach a function as the second argument. You can also enable microphone using it.
 
 # Enable microphone
-To use the microphone, you have to use the "enableMicrophone" function.
+To use the microphone, you have to use the "enableMicrophone" function inside of the callback function.
 Here is an example:
 ```html
 <!doctype html>
 <html>
 <body>
     <desmond-player id="player"></desmond-player>
-    <script src="build/desmond.js"></script>
+    <script src="desmond.min.js"></script>
   <script>
       var player = document.getElementById("player");
       player.loadURL("FILE_HERE.nds", function(){
