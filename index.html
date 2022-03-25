@@ -40,6 +40,11 @@ document.querySelector("desmond-player").loadURL(URL.createObjectURL(document.qu
 if (document.querySelector("input[type='checkbox']").checked) {
 document.querySelector("desmond-player").enableMicrophone();
 }
+ document.querySelector("input[type='checkbox']").onchange = function(){
+ if (document.querySelector("input[type='checkbox']").checked) {
+document.querySelector("desmond-player").enableMicrophone();
+}
+ }
 })
 }
   
