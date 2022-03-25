@@ -18,7 +18,7 @@ Or you can use through CDN (although I haven't tested it yet):
 ```html
 <script src="https://cdn.jsdelivr.net/gh/Unzor/desmond/cdn/desmond.min.js"></script>
 ```
-Make sure to put the script below all elements in body but on top of the script you will use to initiate Desmond (like [this]("#usage")).
+Make sure to put the script below all elements in body but on top of the script you will use to initiate Desmond (like [this](#usage)).
 # Usage
 ```html
 <html>
