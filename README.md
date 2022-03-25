@@ -14,12 +14,17 @@ You can also run this to get Desmond files on Linux, and on Windows with WSL2 an
 curl https://raw.githubusercontent.com/js-emulators/desmond/main/installer.sh | sh
 ```
 
+Or you can use through CDN (although I haven't tested it yet):
+```html
+<script src="https://cdn.jsdelivr.net/gh/Unzor/desmond/cdn/desmond.min.js"></script>
+```
+Make sure to put the script below all elements in body but on top of the script you will use to initiate Desmond (like [this]("#usage")).
 # Usage
 ```html
 <html>
   <body>
     <desmond-player id="player"></desmond-player>
-    <script src="node_modules/desmond-emu/desmond.min.js"></script>
+    <script src="path/to/desmond.min.js"></script>
     <script>
     document.getElementById("player").loadURL("path-to-game.nds");
     </script>
@@ -37,7 +42,7 @@ Here is an example:
 <html>
 <body>
     <desmond-player id="player"></desmond-player>
-    <script src="desmond.min.js"></script>
+    <script src="path/to/desmond.min.js"></script>
   <script>
       var player = document.getElementById("player");
       player.loadURL("FILE_HERE.nds", function(){
