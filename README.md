@@ -14,7 +14,7 @@ You can also run this to get Desmond files on Linux, and on Windows with WSL2 an
 curl https://raw.githubusercontent.com/js-emulators/desmond/main/installer.sh | sh
 ```
 
-Or you can use through CDN (although I haven't tested it yet):
+Or you can use through CDN:
 ```html
 <script src="https://cdn.jsdelivr.net/gh/Unzor/desmond/cdn/desmond.min.js"></script>
 ```
