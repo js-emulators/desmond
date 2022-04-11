@@ -1,5 +1,5 @@
 # desmond
-Embed a Nintendo DS emulator easily.
+Embed a Nintendo DS emulator easily. (Embeddable version of DeSmuME-wasm)
 
 # Installation
 ```
